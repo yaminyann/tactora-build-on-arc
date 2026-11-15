@@ -9,16 +9,19 @@ import {
   Shield,
   Layers,
   Activity,
-  Play,
-  TrendingUp,
+  Cpu,
+  ChevronRight,
+  Database,
+  Lock,
+  Zap,
 } from 'lucide-react'
 import { BRAND } from '@/brand'
 import { useSettings } from '@/trading/settings'
 import { setAgentPrefill } from '@/trading/agent/prefill'
-import { parseCommand, type Intent } from '@/trading/agent/parser'
+import { parseCommand } from '@/trading/agent/parser'
 import { Reveal } from './motion'
 
-// ---------- SECTION HEADERS (CLEAN & MINIMAL) ----------
+// ---------- SECTION HEADERS & KICKERS ----------
 
 function SectionKicker({ children }: { children: ReactNode }) {
   return (
@@ -52,19 +55,19 @@ interface MarketTickerItem {
 }
 
 const LIVE_MARKETS: MarketTickerItem[] = [
-  { pair: 'cirBTC/USDC', price: '91,240.50', change: '+2.84%', isUp: true, vol24h: '3.4M USDC', feed: 'Chainlink Arc' },
-  { pair: 'WETH/USDC', price: '3,184.20', change: '+1.45%', isUp: true, vol24h: '8.2M USDC', feed: 'Chainlink Arc' },
-  { pair: 'ARC/USDC', price: '1.42', change: '+5.12%', isUp: true, vol24h: '1.1M USDC', feed: 'KyberSwap v2' },
-  { pair: 'EURC/USDC', price: '1.054', change: '-0.08%', isUp: false, vol24h: '420K USDC', feed: 'Chainlink Arc' },
+  { pair: 'cirBTC/USDC', price: '91,420.50', change: '+3.12%', isUp: true, vol24h: '3.8M USDC', feed: 'Chainlink Arc' },
+  { pair: 'WETH/USDC', price: '3,210.80', change: '+1.85%', isUp: true, vol24h: '9.4M USDC', feed: 'Chainlink Arc' },
+  { pair: 'ARC/USDC', price: '1.45', change: '+6.20%', isUp: true, vol24h: '1.3M USDC', feed: 'KyberSwap v2' },
+  { pair: 'EURC/USDC', price: '1.053', change: '-0.12%', isUp: false, vol24h: '510K USDC', feed: 'Chainlink Arc' },
 ]
 
 function MarketTickerStrip() {
-  const [pulseIdx, setPulseIdx] = useState(0)
+  const [activeIdx, setActiveIdx] = useState(0)
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setPulseIdx((prev) => (prev + 1) % LIVE_MARKETS.length)
-    }, 2800)
+      setActiveIdx((prev) => (prev + 1) % LIVE_MARKETS.length)
+    }, 2600)
     return () => clearInterval(timer)
   }, [])
 
@@ -73,10 +76,10 @@ function MarketTickerStrip() {
       <div className="flex items-center border-b border-line bg-ink px-4 py-2 text-canvas text-xs font-mono justify-between">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 bg-up" aria-hidden="true" />
-          <span className="font-bold tracking-wider uppercase">ARC L1 REAL-TIME FEED</span>
+          <span className="font-bold tracking-wider uppercase">ARC L1 LIVE EXECUTION STRIP</span>
         </div>
         <span className="text-[11px] text-canvas/70 hidden sm:inline">
-          NATIVE USDC GAS · SUB-SECOND DETERMINISTIC FINALITY
+          CHAIN ID 5042 · SUB-SECOND DETERMINISTIC FINALITY · NATIVE USDC GAS
         </span>
       </div>
 
@@ -86,7 +89,7 @@ function MarketTickerStrip() {
             key={m.pair}
             className={clsx(
               'p-3.5 transition-colors duration-300',
-              pulseIdx === idx ? 'bg-raised/80' : 'bg-panel',
+              activeIdx === idx ? 'bg-raised/90' : 'bg-panel',
             )}
           >
             <div className="flex items-center justify-between">
@@ -113,36 +116,36 @@ function MarketTickerStrip() {
   )
 }
 
-// ---------- 2. HERO SECTION WITH INTERACTIVE TERMINAL ENGINE ----------
+// ---------- 2. HERO SECTION & INTERACTIVE TERMINAL ENGINE ----------
 
 type TerminalTab = 'prompt' | 'orderbook' | 'lifecycle'
 
 interface PresetCommand {
   label: string
   cmd: string
-  desc: string
+  intentLabel: string
 }
 
 const PRESET_COMMANDS: PresetCommand[] = [
   {
     label: 'Market Swap',
     cmd: 'buy 250 USDC of cirBTC',
-    desc: 'Best net routing through 0x & KyberSwap with atomic slippage limit.',
+    intentLabel: 'Spot Swap // 0x & KyberSwap v2',
   },
   {
     label: 'Limit Order',
     cmd: 'limit buy cirBTC 100 USDC at 88500',
-    desc: 'On-chain escrow order filled by keepers when oracle price <= 88,500.',
+    intentLabel: 'Conditional Limit // ArcTradeOrders Escrow',
   },
   {
     label: 'Stop Loss',
     cmd: 'stop loss 0.2 cirBTC at 86000',
-    desc: 'Automated capital protection triggered on Chainlink price feed.',
+    intentLabel: 'Stop Loss // Chainlink Oracle Trigger',
   },
   {
     label: 'DCA Accumulation',
     cmd: 'dca 20 USDC into WETH daily for 14 days',
-    desc: 'Scheduled recurring execution with refundable unspent balance.',
+    intentLabel: 'Recurring DCA // Automated Keeper Execution',
   },
 ]
 
@@ -152,7 +155,7 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
   const [copied, setCopied] = useState(false)
   const { animate } = useSettings()
 
-  // Parse live typed prompt using actual deterministic parser
+  // Real client-side deterministic AST parse
   const parsed = useMemo(() => parseCommand(inputVal), [inputVal])
 
   const handleSelectPreset = (p: PresetCommand) => {
@@ -184,13 +187,13 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
       </div>
 
       <div className="grid items-start gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:gap-10">
-        {/* Left: Direct Value Proposition */}
+        {/* Left: Value Proposition */}
         <div>
-          <h1 className="text-4xl font-display uppercase leading-[0.98] sm:text-6xl lg:text-[4.1rem]">
-            The Agentic Trading Terminal on Arc.
+          <h1 className="text-4xl font-display uppercase leading-[0.98] sm:text-6xl lg:text-[4.2rem]">
+            The High-Performance Trading Terminal on Arc.
           </h1>
           <p className="mt-5 max-w-xl text-sm leading-relaxed text-mute sm:text-base">
-            High-performance non-custodial trading on Arc L1. Route spot swaps across DEX aggregators, register decentralized conditional orders (Limit, Stop, Trailing, OCO), and execute via natural-language prompts with verified safety readback.
+            One unified, non-custodial execution engine on Arc L1. High-speed spot DEX aggregation across 0x &amp; KyberSwap, smart contract conditional orders in ArcTradeOrders, and an agent parser that compiles natural language into signed transactions.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -210,26 +213,34 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
             </button>
           </div>
 
-          {/* Hard architectural trust facts */}
-          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 border-t border-line/60 pt-5 font-mono text-xs">
-            <div className="border border-line bg-panel p-2.5">
-              <span className="block text-[10px] uppercase font-bold text-mute">Custody</span>
-              <span className="mt-0.5 block font-bold text-ink">100% Non-Custodial</span>
+          {/* Hyperliquid-style Live Metric Ribbon */}
+          <div className="mt-10 grid grid-cols-2 gap-3 sm:grid-cols-4 border-t border-line/60 pt-5 font-mono text-xs">
+            <div className="border border-line bg-panel p-3">
+              <span className="block text-[10px] uppercase font-bold text-mute">Block Finality</span>
+              <span className="mt-1 block font-display text-lg text-up">&lt; 1s</span>
+              <span className="text-[10px] text-mute">Deterministic</span>
             </div>
-            <div className="border border-line bg-panel p-2.5">
-              <span className="block text-[10px] uppercase font-bold text-mute">Keeper Fee</span>
-              <span className="mt-0.5 block font-bold text-ink">0.10% Cap (Lower-Only)</span>
+            <div className="border border-line bg-panel p-3">
+              <span className="block text-[10px] uppercase font-bold text-mute">Gas Currency</span>
+              <span className="mt-1 block font-display text-lg text-ink">USDC</span>
+              <span className="text-[10px] text-mute">Native 18 Decimals</span>
             </div>
-            <div className="border border-line bg-panel p-2.5 col-span-2 sm:col-span-1">
-              <span className="block text-[10px] uppercase font-bold text-mute">Finality</span>
-              <span className="mt-0.5 block font-bold text-up">Sub-Second Deterministic</span>
+            <div className="border border-line bg-panel p-3">
+              <span className="block text-[10px] uppercase font-bold text-mute">Order Types</span>
+              <span className="mt-1 block font-display text-lg text-ink">6 + DCA</span>
+              <span className="text-[10px] text-mute">Smart Escrow</span>
+            </div>
+            <div className="border border-line bg-panel p-3">
+              <span className="block text-[10px] uppercase font-bold text-mute">Custody Risk</span>
+              <span className="mt-1 block font-display text-lg text-up">0.00%</span>
+              <span className="text-[10px] text-mute">100% Self-Custodial</span>
             </div>
           </div>
         </div>
 
-        {/* Right: Interactive Terminal Sandbox */}
+        {/* Right: Hyperliquid Interactive Terminal Sandbox */}
         <div className="border border-line bg-panel shadow-hard-lg">
-          {/* Header tab navigation */}
+          {/* Tab navigation */}
           <div className="flex border-b border-line bg-ink text-canvas">
             <button
               onClick={() => setActiveTab('prompt')}
@@ -276,7 +287,7 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                   {/* Preset quick buttons */}
                   <div className="mb-3">
                     <span className="block font-mono text-[11px] font-bold text-mute uppercase mb-1.5">
-                      Prompt Presets:
+                      Select Prompt Scenario:
                     </span>
                     <div className="flex flex-wrap gap-1.5">
                       {PRESET_COMMANDS.map((p) => (
@@ -322,7 +333,7 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                     <div className="flex items-center justify-between border-b border-line/40 pb-2">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-xs font-bold text-ink uppercase">
-                          {parsed.ok ? `Parsed: ${parsed.intent.kind}` : 'Parser Warning'}
+                          {parsed.ok ? `Compiled Intent: ${parsed.intent.kind}` : 'Syntax Warning'}
                         </span>
                       </div>
                       <span
@@ -349,21 +360,21 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                         )}
                         {'price' in parsed.intent && (
                           <div className="flex justify-between py-0.5">
-                            <span className="text-mute">Execution Trigger:</span>
+                            <span className="text-mute">Trigger Price:</span>
                             <span className="font-bold text-ink">${parsed.intent.price}</span>
                           </div>
                         )}
                         {'frequency' in parsed.intent && (
                           <div className="flex justify-between py-0.5">
-                            <span className="text-mute">Frequency &amp; Cadence:</span>
+                            <span className="text-mute">Execution Cadence:</span>
                             <span className="font-bold text-ink">
                               {parsed.intent.frequency} ({parsed.intent.days} days)
                             </span>
                           </div>
                         )}
                         <div className="flex justify-between py-0.5">
-                          <span className="text-mute">Gas Settlement:</span>
-                          <span className="font-bold text-up">Native USDC (No wrapping)</span>
+                          <span className="text-mute">Settlement Asset:</span>
+                          <span className="font-bold text-up">Native USDC (Zero wrapping)</span>
                         </div>
                       </div>
                     ) : (
@@ -372,13 +383,13 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
 
                     <div className="mt-3 flex items-center justify-between border-t border-line/30 pt-2.5">
                       <span className="font-mono text-[11px] text-mute">
-                        Requires explicit wallet signature
+                        Explicit cryptographic wallet signature required
                       </span>
                       <button
                         onClick={handleExecute}
                         className="press border border-line bg-accent px-3 py-1 font-mono text-xs font-bold text-accent-ink shadow-hard-sm hover:opacity-95"
                       >
-                        Open in Agent &gt;
+                        Execute in Agent &gt;
                       </button>
                     </div>
                   </div>
@@ -396,18 +407,18 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                 >
                   <div className="flex items-center justify-between border-b border-line pb-2">
                     <span className="font-bold text-ink uppercase">cirBTC/USDC Order Depth</span>
-                    <span className="text-[11px] text-mute">Chainlink Feed: 91,240.50</span>
+                    <span className="text-[11px] text-mute">Chainlink Oracle: 91,420.50</span>
                   </div>
 
                   {/* Asks (Sells) */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-down/80">
-                      <span>91,320.00</span>
+                      <span>91,520.00</span>
                       <span className="num">1.45 cirBTC</span>
                       <div className="w-16 bg-down/20 h-2 self-center rounded-none" />
                     </div>
                     <div className="flex justify-between text-down/80">
-                      <span>91,280.00</span>
+                      <span>91,480.00</span>
                       <span className="num">0.82 cirBTC</span>
                       <div className="w-10 bg-down/20 h-2 self-center rounded-none" />
                     </div>
@@ -421,12 +432,12 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                   {/* Bids (Buys) */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-up/90">
-                      <span>91,220.00</span>
+                      <span>91,400.00</span>
                       <span className="num">2.10 cirBTC</span>
                       <div className="w-20 bg-up/20 h-2 self-center rounded-none" />
                     </div>
                     <div className="flex justify-between text-up/90">
-                      <span>91,180.00</span>
+                      <span>91,350.00</span>
                       <span className="num">3.50 cirBTC</span>
                       <div className="w-32 bg-up/20 h-2 self-center rounded-none" />
                     </div>
@@ -449,13 +460,13 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                 >
                   <div className="border-l-2 border-accent pl-3 py-1">
                     <span className="text-[10px] font-bold text-mute uppercase block">Stage 1</span>
-                    <span className="font-bold text-ink">Client Parse &amp; Simulation</span>
-                    <p className="text-[11px] text-mute mt-0.5">Intent resolved by strict grammar. Balance verified.</p>
+                    <span className="font-bold text-ink">Deterministic Intent Compilation</span>
+                    <p className="text-[11px] text-mute mt-0.5">Strict grammar validation. Liquidity quoted. Balance verified.</p>
                   </div>
                   <div className="border-l-2 border-line pl-3 py-1">
                     <span className="text-[10px] font-bold text-mute uppercase block">Stage 2</span>
-                    <span className="font-bold text-ink">Wallet Cryptographic Signature</span>
-                    <p className="text-[11px] text-mute mt-0.5">Wagmi/Viem sends order payload to ArcTradeOrders contract.</p>
+                    <span className="font-bold text-ink">Cryptographic User Signature</span>
+                    <p className="text-[11px] text-mute mt-0.5">Wagmi/Viem sends verified transaction to ArcTradeOrders.</p>
                   </div>
                   <div className="border-l-2 border-line pl-3 py-1">
                     <span className="text-[10px] font-bold text-mute uppercase block">Stage 3</span>
@@ -464,7 +475,7 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
                   </div>
                   <div className="border-l-2 border-line pl-3 py-1">
                     <span className="text-[10px] font-bold text-mute uppercase block">Stage 4</span>
-                    <span className="font-bold text-up">Settlement &amp; Output Delivery</span>
+                    <span className="font-bold text-up">Deterministic Settlement</span>
                     <p className="text-[11px] text-mute mt-0.5">Order fills. Bought tokens delivered directly to your wallet.</p>
                   </div>
                 </motion.div>
@@ -477,92 +488,247 @@ function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () =
   )
 }
 
-// ---------- 3. TERMINAL ENGINES MATRIX (HYPERLIQUID STYLE) ----------
+// ---------- 3. HYPERLIQUID SIGNATURE: INTERACTIVE PROTOCOL STACK ----------
 
-interface ModuleInfo {
+interface StackTier {
+  id: string
+  num: string
+  name: string
+  tagline: string
+  contractRef: string
+  facts: [string, string][]
+  summary: string
+}
+
+const PROTOCOL_STACK: StackTier[] = [
+  {
+    id: 'layer-agent',
+    num: 'LAYER 04',
+    name: 'Agent Compilation & Guardrails',
+    tagline: 'Deterministic Natural Language to On-Chain Transaction Compiler',
+    contractRef: 'src/trading/agent/parser.ts',
+    summary: 'Converts conversational trading intentions into verified contract payloads without probabilistic hallucination risks.',
+    facts: [
+      ['Grammar Engine', 'Deterministic client-side AST compiler'],
+      ['Key Custody', 'Zero server access · 100% wallet signed'],
+      ['Risk Controls', 'Daily budget caps & pre-execution simulation'],
+    ],
+  },
+  {
+    id: 'layer-gateway',
+    num: 'LAYER 03',
+    name: 'Liquidity Gateway & Aggregation',
+    tagline: 'Parallel Liquidity Discovery across 0x & KyberSwap v2',
+    contractRef: '0x000...22734 / 0x613...37b5',
+    summary: 'Simultaneously quotes 0x AllowanceHolder and KyberSwap v2, optimizing for maximum received tokens net of gas.',
+    facts: [
+      ['Mainnet Routers', '0x Cancun AllowanceHolder + KyberSwap v2'],
+      ['Simulation', 'On-chain eth_call pre-trade validation'],
+      ['Slippage Floor', 'Guaranteed minimum received output'],
+    ],
+  },
+  {
+    id: 'layer-escrow',
+    num: 'LAYER 02',
+    name: 'Conditional Escrow & Keeper Core',
+    tagline: 'On-Chain Execution Engine with Decentralized Keepers',
+    contractRef: 'ArcTradeOrders.sol v2 (23,778 B)',
+    summary: 'Escrows limit, stop, trailing, and DCA orders on Arc L1. Permissionless keeper bots trigger executions on oracle cross.',
+    facts: [
+      ['Order Matrix', 'Limit, Stop-Loss, Take-Profit, Trailing, OCO, DCA'],
+      ['Keeper Bounty', '0.10% output fee (strictly lower-only)'],
+      ['Cancellation', 'Instant 100% principal return at any block'],
+    ],
+  },
+  {
+    id: 'layer-l1',
+    num: 'LAYER 01',
+    name: 'Arc L1 Consensus & Native Settlement',
+    tagline: 'Deterministic Sub-Second Finality with Native USDC Gas',
+    contractRef: 'Arc L1 (Chain 5042 / 5042002)',
+    summary: 'The underlying blockchain foundation engineered for financial throughput without predatory MEV sandwich attacks.',
+    facts: [
+      ['Gas Economy', 'Native 18-dec USDC unified with 6-dec balances'],
+      ['Finality', 'Deterministic sub-second single block finality'],
+      ['Data Feeds', 'Chainlink oracles with round completeness checks'],
+    ],
+  },
+]
+
+function InteractiveProtocolStack() {
+  const [activeTierId, setActiveTierId] = useState<string>('layer-escrow')
+  const activeTier = PROTOCOL_STACK.find((t) => t.id === activeTierId) ?? PROTOCOL_STACK[2]
+  const { animate } = useSettings()
+
+  return (
+    <section>
+      <SectionHeader
+        kicker="Protocol Architecture"
+        title="Infrastructure to house all finance on Arc."
+        desc="Interactive multi-tier architecture breaking down how execution, escrow, aggregation, and natural-language compilation stack together."
+      />
+
+      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        {/* Tier Selector Stack */}
+        <div className="space-y-3">
+          {PROTOCOL_STACK.map((tier) => {
+            const isSelected = tier.id === activeTierId
+            return (
+              <button
+                key={tier.id}
+                onClick={() => setActiveTierId(tier.id)}
+                className={clsx(
+                  'w-full text-left border border-line p-4 sm:p-5 transition-all duration-150',
+                  isSelected
+                    ? 'bg-ink text-canvas shadow-hard -translate-y-0.5'
+                    : 'bg-panel text-ink hover:bg-raised shadow-hard-sm',
+                )}
+              >
+                <div className="flex items-center justify-between">
+                  <span
+                    className={clsx(
+                      'font-mono text-xs font-bold px-2 py-0.5',
+                      isSelected ? 'bg-accent text-accent-ink' : 'bg-raised text-mute',
+                    )}
+                  >
+                    {tier.num}
+                  </span>
+                  <span className="font-mono text-[11px] opacity-70">
+                    {tier.contractRef}
+                  </span>
+                </div>
+                <h3 className="mt-2 text-lg sm:text-xl font-display uppercase tracking-tight">
+                  {tier.name}
+                </h3>
+                <p className={clsx('mt-1 text-xs sm:text-sm font-mono', isSelected ? 'text-canvas/80' : 'text-mute')}>
+                  {tier.tagline}
+                </p>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Selected Tier Deep-Dive Spec Card */}
+        <div className="border border-line bg-panel p-6 shadow-hard flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <span className="bg-accent text-accent-ink font-mono text-xs font-bold px-2 py-0.5 uppercase">
+                {activeTier.num} SPECIFICATION
+              </span>
+              <span className="font-mono text-xs font-bold text-ink">
+                {activeTier.contractRef}
+              </span>
+            </div>
+
+            <h3 className="mt-4 text-2xl font-display uppercase text-ink">
+              {activeTier.name}
+            </h3>
+            <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">
+              {activeTier.summary}
+            </p>
+
+            <div className="mt-6 border-t border-line/40 pt-4 space-y-2.5">
+              <span className="block font-mono text-[11px] font-bold uppercase text-mute">
+                Architectural Guarantees:
+              </span>
+              {activeTier.facts.map(([k, v]) => (
+                <div key={k} className="border border-line bg-raised p-3 font-mono text-xs">
+                  <span className="block text-[10px] uppercase font-bold text-mute">{k}</span>
+                  <span className="mt-0.5 block font-bold text-ink">{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 border-t border-line/40 pt-4 flex items-center justify-between font-mono text-xs">
+            <span className="text-mute">Status: Audited &amp; Deployed</span>
+            <span className="text-up font-bold">100% Non-Custodial</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 4. FINANCIAL PRIMITIVES (HYPERLIQUID BENTO CARDS) ----------
+
+interface FeatureModule {
   code: string
   title: string
   tag: string
   desc: string
   specs: [string, string][]
+  targetPage: 'trade' | 'agent'
 }
 
-const TERMINAL_ENGINES: ModuleInfo[] = [
+const FEATURE_MODULES: FeatureModule[] = [
   {
-    code: 'AGG-01',
-    title: 'Spot DEX Aggregation',
+    code: 'MOD-01',
+    title: 'Spot DEX Aggregator',
     tag: 'Best Output Routing',
-    desc: 'Simultaneous liquidity discovery across 0x AllowanceHolder and KyberSwap v2. Evaluates net output factoring gas costs with instant client-side simulation.',
+    desc: 'Parallel quoting engine querying 0x AllowanceHolder and KyberSwap v2. Evaluates net tokens minus gas with instant on-chain simulation.',
     specs: [
-      ['Routers', '0x Cancun + KyberSwap v2'],
+      ['Routing', '0x Cancun + KyberSwap v2'],
       ['Slippage floor', 'Configurable 0.1% to 5.0%'],
-      ['Asset pool', '60+ routable tokens on Arc'],
+      ['Routable pairs', '60+ verified tokens on Arc'],
     ],
+    targetPage: 'trade',
   },
   {
-    code: 'ORD-02',
-    title: 'On-Chain Conditional Escrow',
+    code: 'MOD-02',
+    title: 'Smart Order Escrow',
     tag: 'Limit · Stops · OCO',
-    desc: 'Limit, Stop-Loss, Take-Profit, Stop-Limit, Trailing-Stop, and OCO. Assets are securely escrowed in ArcTradeOrders.sol and filled by keepers on oracle cross.',
+    desc: 'Limit, Stop-Loss, Take-Profit, Stop-Limit, Trailing-Stop, and OCO. Funds are escrowed in ArcTradeOrders.sol and filled automatically by decentralized keepers.',
     specs: [
       ['Contract', 'ArcTradeOrders v2 (23,778 B)'],
-      ['Oracle trigger', 'Chainlink round validation'],
-      ['Cancellation', 'Instant 100% refund at any block'],
+      ['Keeper trigger', 'Chainlink round verification'],
+      ['Cancellation', 'Instant 100% refund anytime'],
     ],
+    targetPage: 'trade',
   },
   {
-    code: 'DCA-03',
+    code: 'MOD-03',
     title: 'Automated DCA Engine',
     tag: 'Recurring Purchases',
-    desc: 'Automate dollar-cost averaging on Arc. Configure hourly, daily, weekly, or monthly execution with maximum price ceiling caps to prevent buying into spikes.',
+    desc: 'Automate dollar-cost averaging on Arc. Configure hourly, daily, weekly, or monthly execution with maximum price ceiling caps to prevent buying during spikes.',
     specs: [
-      ['Intervals', 'Hourly, Daily, Weekly, Monthly'],
-      ['Price safety', 'Optional ceiling cap gate'],
-      ['Unspent budget', 'Withdraw principal anytime'],
+      ['Cadence', 'Hourly, Daily, Weekly, Monthly'],
+      ['Ceiling protection', 'Optional price barrier guard'],
+      ['Principal exit', 'Refund unspent budget anytime'],
     ],
-  },
-  {
-    code: 'AGT-04',
-    title: 'Deterministic Agent Station',
-    tag: 'Zero Hallucinations',
-    desc: 'A formal grammar compiler that converts conversational English instructions directly into verified on-chain trading plans. No LLM key required.',
-    specs: [
-      ['Grammar', 'Strict, deterministic parser'],
-      ['Safety readback', 'Explicit confirmation prompt'],
-      ['Keys', 'Never leaves your browser wallet'],
-    ],
+    targetPage: 'trade',
   },
 ]
 
-function TerminalEnginesMatrix({ onSelectModule }: { onSelectModule: (target: 'trade' | 'agent') => void }) {
+function FinancialPrimitivesGrid({ onNavigate }: { onNavigate: (page: 'trade' | 'agent') => void }) {
   return (
     <section>
       <SectionHeader
-        kicker="Terminal Matrix"
+        kicker="Core Primitives"
         title="Engineered for high-frequency on-chain control."
         desc="All execution modules run directly on Arc blockchain infrastructure with zero counterparty custodial risk."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {TERMINAL_ENGINES.map((eng) => (
-          <Reveal key={eng.code}>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {FEATURE_MODULES.map((mod) => (
+          <Reveal key={mod.code}>
             <div className="group flex h-full flex-col justify-between border border-line bg-panel p-5 shadow-hard-sm hover:border-line hover:shadow-hard transition-all duration-150">
               <div>
                 <div className="flex items-center justify-between border-b border-line pb-2.5">
-                  <span className="font-mono text-xs font-bold text-mute">{eng.code}</span>
+                  <span className="font-mono text-xs font-bold text-mute">{mod.code}</span>
                   <span className="border border-line bg-raised px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink">
-                    {eng.tag}
+                    {mod.tag}
                   </span>
                 </div>
                 <h3 className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">
-                  {eng.title}
+                  {mod.title}
                 </h3>
-                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{eng.desc}</p>
+                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{mod.desc}</p>
               </div>
 
               <div className="mt-4 border-t border-line/40 pt-3">
                 <div className="space-y-1 font-mono text-[11px]">
-                  {eng.specs.map(([k, v]) => (
+                  {mod.specs.map(([k, v]) => (
                     <div key={k} className="flex justify-between text-mute">
                       <span>{k}:</span>
                       <span className="font-bold text-ink">{v}</span>
@@ -571,10 +737,10 @@ function TerminalEnginesMatrix({ onSelectModule }: { onSelectModule: (target: 't
                 </div>
 
                 <button
-                  onClick={() => onSelectModule(eng.code === 'AGT-04' ? 'agent' : 'trade')}
+                  onClick={() => onNavigate(mod.targetPage)}
                   className="press mt-4 flex w-full items-center justify-center gap-1.5 border border-line bg-raised py-2 font-mono text-xs font-bold text-ink group-hover:bg-accent group-hover:text-accent-ink transition-colors"
                 >
-                  <span>Launch Module</span>
+                  <span>Launch Primitive</span>
                   <ArrowUpRight className="h-3.5 w-3.5" />
                 </button>
               </div>
@@ -586,106 +752,71 @@ function TerminalEnginesMatrix({ onSelectModule }: { onSelectModule: (target: 't
   )
 }
 
-// ---------- 4. BUILT ON ARC L1 SPECIFICATIONS (TECHNICAL BLUEPRINT) ----------
+// ---------- 5. ARC L1 TECHNICAL COMPARISON MATRIX ----------
 
-interface ArcSpec {
-  title: string
-  category: string
-  fact: string
-  techDetail: string
+interface ComparisonRow {
+  aspect: string
+  arcStandard: string
+  legacyStandard: string
 }
 
-const ARC_SPECS: ArcSpec[] = [
+const COMPARISON_ROWS: ComparisonRow[] = [
   {
-    title: 'Native USDC Gas Economy',
-    category: 'Settlement Architecture',
-    fact: 'Gas paid natively in 18-decimal USDC, unified with 6-decimal ERC-20 balances.',
-    techDetail: 'Eliminates synthetic wrapper tokens (WETH). All fee calculations and liquid balance pools are denominated directly in USD Coin.',
+    aspect: 'Gas Currency',
+    arcStandard: 'Native USDC (18-dec) unified with 6-dec balances. No wrapping needed.',
+    legacyStandard: 'Synthetic WETH/wrapped tokens requiring manual wrapping transactions.',
   },
   {
-    title: 'Sub-Second Deterministic Finality',
-    category: 'Consensus & Latency',
-    fact: 'Zero mempool front-running or sandwich attacks on conditional triggers.',
-    techDetail: 'Arc deterministic block finality ensures keepers submit triggers without competing against predatory MEV searcher bundles.',
+    aspect: 'Block Finality',
+    arcStandard: 'Sub-second deterministic single-block finality.',
+    legacyStandard: 'Probabilistic finality subject to MEV reorgs and block reordering.',
   },
   {
-    title: 'Chainlink Data Feed Verification',
-    category: 'Oracle Integrity',
-    fact: 'Smart contract enforces round completeness and staleness checks on every fill.',
-    techDetail: 'ArcTradeOrders.sol verifies answeredInRound >= roundId and checks heartbeats against configured threshold limits.',
+    aspect: 'Oracle Validation',
+    arcStandard: 'Chainlink round validation checking answeredInRound >= roundId on-chain.',
+    legacyStandard: 'Unchecked oracle staleness vulnerable to Flash Loan price manipulation.',
   },
   {
-    title: 'Permissionless Keeper Network',
-    category: 'Execution Protocol',
-    fact: 'Autonomous decentralized execution with hardcoded 0.10% fee cap.',
-    techDetail: 'Execution functions are open to any participant. The protocol fee can only ever be lowered by governance, never raised.',
+    aspect: 'Keeper Decentralization',
+    arcStandard: 'Permissionless keeper execution with hardcoded 0.10% lower-only fee cap.',
+    legacyStandard: 'Centralized relayer networks with arbitrary execution markups.',
   },
 ]
 
-function ArcInfrastructureBlueprint() {
+function TechnicalComparisonMatrix() {
   return (
     <section>
       <SectionHeader
-        kicker="Blockchain Infrastructure"
-        title="Why Lumarc is built natively on Arc."
+        kicker="Technical Blueprint"
+        title="Why Lumarc is built natively on Arc L1."
         desc="Arc network provides the architectural primitives required for institutional-grade non-custodial trading."
       />
 
-      <div className="border border-line bg-panel shadow-hard">
-        <div className="flex items-center justify-between border-b border-line bg-ink px-4 py-3 text-canvas">
-          <span className="font-mono text-xs font-bold uppercase tracking-wider text-accent">
-            Arc L1 Technical Specifications
-          </span>
-          <span className="font-mono text-xs text-canvas/70">
-            Chain 5042 (Mainnet) · Chain 5042002 (Testnet)
-          </span>
-        </div>
-
-        <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-y-0 sm:divide-x">
-          <div className="divide-y divide-line">
-            {ARC_SPECS.slice(0, 2).map((s) => (
-              <div key={s.title} className="p-5 sm:p-6">
-                <span className="font-mono text-[10px] font-bold uppercase text-mute tracking-wider block">
-                  {s.category}
-                </span>
-                <h3 className="mt-1 font-display text-base font-bold uppercase text-ink sm:text-lg">
-                  {s.title}
-                </h3>
-                <p className="mt-2 text-xs sm:text-sm font-bold text-ink leading-relaxed">
-                  {s.fact}
-                </p>
-                <p className="mt-1.5 text-xs text-mute leading-relaxed font-mono">
-                  {s.techDetail}
-                </p>
-              </div>
+      <div className="border border-line bg-panel shadow-hard overflow-x-auto">
+        <table className="w-full text-left border-collapse font-mono text-xs">
+          <thead>
+            <tr className="border-b border-line bg-ink text-canvas">
+              <th className="p-3.5 sm:p-4 font-bold uppercase w-1/4">Architectural Primitive</th>
+              <th className="p-3.5 sm:p-4 font-bold uppercase w-3/8 text-accent">Arc L1 Standard (Lumarc)</th>
+              <th className="p-3.5 sm:p-4 font-bold uppercase w-3/8 opacity-70">Legacy EVM DEX Models</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {COMPARISON_ROWS.map((row) => (
+              <tr key={row.aspect} className="hover:bg-raised/60 transition-colors">
+                <td className="p-3.5 sm:p-4 font-bold text-ink">{row.aspect}</td>
+                <td className="p-3.5 sm:p-4 font-bold text-ink bg-accent/5">{row.arcStandard}</td>
+                <td className="p-3.5 sm:p-4 text-mute">{row.legacyStandard}</td>
+              </tr>
             ))}
-          </div>
-
-          <div className="divide-y divide-line">
-            {ARC_SPECS.slice(2, 4).map((s) => (
-              <div key={s.title} className="p-5 sm:p-6">
-                <span className="font-mono text-[10px] font-bold uppercase text-mute tracking-wider block">
-                  {s.category}
-                </span>
-                <h3 className="mt-1 font-display text-base font-bold uppercase text-ink sm:text-lg">
-                  {s.title}
-                </h3>
-                <p className="mt-2 text-xs sm:text-sm font-bold text-ink leading-relaxed">
-                  {s.fact}
-                </p>
-                <p className="mt-1.5 text-xs text-mute leading-relaxed font-mono">
-                  {s.techDetail}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
+          </tbody>
+        </table>
       </div>
     </section>
   )
 }
 
-// ---------- 5. SECURITY & CLIENT SOVEREIGNTY LEDGER ----------
+// ---------- 6. CLIENT SOVEREIGNTY & SECURITY LEDGER ----------
 
 function SecurityProtocol() {
   return (
@@ -714,7 +845,7 @@ function SecurityProtocol() {
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 bg-ink" aria-hidden="true" />
               <span>
-                <strong>Mandatory Transaction Signing:</strong> Every trade, allowance approval, and order registration requires direct cryptographic signature.
+                <strong>Mandatory Cryptographic Signing:</strong> Every single trade, allowance approval, and order registration requires direct cryptographic signature.
               </span>
             </li>
             <li className="flex items-start gap-2.5">
@@ -759,7 +890,7 @@ function SecurityProtocol() {
   )
 }
 
-// ---------- 6. LAUNCH BANNER (HYPERLIQUID STYLE) ----------
+// ---------- 7. LAUNCH BANNER (HYPERLIQUID STYLE) ----------
 
 function LaunchTerminalBanner({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
   return (
@@ -814,15 +945,12 @@ export function Landing() {
   const { setPage } = useSettings()
 
   return (
-    <div className="w-full space-y-12 sm:space-y-20 pb-12">
+    <div className="w-full space-y-14 sm:space-y-24 pb-12">
       <MarketTickerStrip />
       <HeroTerminal onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
-      <TerminalEnginesMatrix
-        onSelectModule={(target) => {
-          setPage(target)
-        }}
-      />
-      <ArcInfrastructureBlueprint />
+      <InteractiveProtocolStack />
+      <FinancialPrimitivesGrid onNavigate={(target) => setPage(target)} />
+      <TechnicalComparisonMatrix />
       <SecurityProtocol />
       <LaunchTerminalBanner onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
     </div>
