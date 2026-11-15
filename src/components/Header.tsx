@@ -38,7 +38,7 @@ export function Header({ network }: { network: NetworkConfig }) {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-canvas">
-      <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-3 md:h-16 md:gap-6 md:px-5">
+      <div className="flex h-14 w-full items-center gap-3 px-4 sm:px-6 lg:px-8 md:h-16 md:gap-6">
         <button onClick={() => s.setPage(isConnected ? 'trade' : 'home')} aria-label={`${isConnected ? 'Open Trade' : 'Home'}`} className="flex min-h-[44px] shrink-0 items-center">
           <span className="hidden sm:block">
             <Logo />

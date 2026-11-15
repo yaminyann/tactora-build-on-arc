@@ -48,7 +48,7 @@ export function Footer() {
   return (
     <footer className="mt-8 pb-24 md:pb-0">
       <div className="bg-ink text-canvas">
-        <div className="mx-auto grid max-w-[1600px] gap-8 px-3 py-10 sm:px-5 md:grid-cols-[1.2fr_1fr] md:py-14">
+        <div className="grid w-full gap-8 px-4 py-10 sm:px-6 lg:px-8 md:grid-cols-[1.2fr_1fr] md:py-14">
           <div>
             <button onClick={() => setPage('home')} className="font-display text-5xl leading-none sm:text-7xl" aria-label={`${BRAND.name} home`}>
               {BRAND.name}
@@ -74,7 +74,7 @@ export function Footer() {
           </div>
         </div>
         <div className="border-t border-canvas/40">
-          <div className="mx-auto grid max-w-[1600px] sm:grid-cols-3">
+          <div className="grid w-full px-4 sm:px-6 lg:px-8 sm:grid-cols-3">
             <Cell label="Backend" value={health.isSuccess ? 'Online' : health.isLoading ? 'Checking' : 'Offline'} tone={health.isSuccess ? 'up' : health.isLoading ? undefined : 'down'} />
             <Cell label="Network" value={net.label} />
             <Cell label="Keeper" value={keeper?.running ? 'Running' : 'Not running'} tone={keeper?.running ? 'up' : undefined} />

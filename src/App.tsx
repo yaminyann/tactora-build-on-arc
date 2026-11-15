@@ -38,7 +38,7 @@ function Shell() {
         Skip to content
       </a>
       <Header network={network} />
-      <main id="main" className="mx-auto max-w-[1600px] px-3 pb-6 pt-4 sm:px-5">
+      <main id="main" className="w-full px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <AnimatePresence mode="wait" initial={false}>
           <PageFade key={page} pageKey={page}>
             <ErrorBoundary resetKey={page}>
