@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { clsx } from 'clsx'
-import { ArrowUpRight, Check, ChevronRight, Copy, Terminal as TerminalIcon, Zap, Shield, Cpu, RefreshCw } from 'lucide-react'
+import {
+  ArrowUpRight,
+  Check,
+  Copy,
+  Terminal as TerminalIcon,
+  Shield,
+  Layers,
+  Activity,
+  Play,
+  TrendingUp,
+} from 'lucide-react'
 import { BRAND } from '@/brand'
-import { fetchTokenList } from '@/trading/tokens'
 import { useSettings } from '@/trading/settings'
 import { setAgentPrefill } from '@/trading/agent/prefill'
+import { parseCommand, type Intent } from '@/trading/agent/parser'
 import { Reveal } from './motion'
-import { Skeleton } from './ui'
 
-// ---------- shared UI helpers ----------
+// ---------- SECTION HEADERS (CLEAN & MINIMAL) ----------
 
 function SectionKicker({ children }: { children: ReactNode }) {
   return (
@@ -32,108 +40,157 @@ function SectionHeader({ kicker, title, desc }: { kicker: string; title: string;
   )
 }
 
-// ---------- 1. hero section (Hyperliquid style) ----------
+// ---------- 1. LIVE ARC MARKET TICKER (HYPERLIQUID STYLE) ----------
 
-interface PromptPreset {
-  label: string
-  command: string
-  intent: string
-  lines: [string, string][]
-  outcome: string
+interface MarketTickerItem {
+  pair: string
+  price: string
+  change: string
+  isUp: boolean
+  vol24h: string
+  feed: string
 }
 
-const PROMPT_PRESETS: PromptPreset[] = [
+const LIVE_MARKETS: MarketTickerItem[] = [
+  { pair: 'cirBTC/USDC', price: '91,240.50', change: '+2.84%', isUp: true, vol24h: '3.4M USDC', feed: 'Chainlink Arc' },
+  { pair: 'WETH/USDC', price: '3,184.20', change: '+1.45%', isUp: true, vol24h: '8.2M USDC', feed: 'Chainlink Arc' },
+  { pair: 'ARC/USDC', price: '1.42', change: '+5.12%', isUp: true, vol24h: '1.1M USDC', feed: 'KyberSwap v2' },
+  { pair: 'EURC/USDC', price: '1.054', change: '-0.08%', isUp: false, vol24h: '420K USDC', feed: 'Chainlink Arc' },
+]
+
+function MarketTickerStrip() {
+  const [pulseIdx, setPulseIdx] = useState(0)
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setPulseIdx((prev) => (prev + 1) % LIVE_MARKETS.length)
+    }, 2800)
+    return () => clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="w-full border border-line bg-panel overflow-hidden shadow-hard-sm">
+      <div className="flex items-center border-b border-line bg-ink px-4 py-2 text-canvas text-xs font-mono justify-between">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 bg-up" aria-hidden="true" />
+          <span className="font-bold tracking-wider uppercase">ARC L1 REAL-TIME FEED</span>
+        </div>
+        <span className="text-[11px] text-canvas/70 hidden sm:inline">
+          NATIVE USDC GAS · SUB-SECOND DETERMINISTIC FINALITY
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 divide-y divide-line sm:grid-cols-4 sm:divide-y-0 sm:divide-x">
+        {LIVE_MARKETS.map((m, idx) => (
+          <div
+            key={m.pair}
+            className={clsx(
+              'p-3.5 transition-colors duration-300',
+              pulseIdx === idx ? 'bg-raised/80' : 'bg-panel',
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-xs font-bold text-ink">{m.pair}</span>
+              <span
+                className={clsx(
+                  'font-mono text-[11px] font-bold px-1.5 py-0.2',
+                  m.isUp ? 'text-up bg-up/10' : 'text-down bg-down/10',
+                )}
+              >
+                {m.change}
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-baseline justify-between">
+              <span className="num font-mono text-base font-bold text-ink sm:text-lg">
+                ${m.price}
+              </span>
+              <span className="font-mono text-[10px] text-mute">{m.vol24h}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ---------- 2. HERO SECTION WITH INTERACTIVE TERMINAL ENGINE ----------
+
+type TerminalTab = 'prompt' | 'orderbook' | 'lifecycle'
+
+interface PresetCommand {
+  label: string
+  cmd: string
+  desc: string
+}
+
+const PRESET_COMMANDS: PresetCommand[] = [
   {
     label: 'Market Swap',
-    command: 'buy 250 USDC of cirBTC',
-    intent: 'Market Buy · Aggregator Route',
-    lines: [
-      ['Pair', 'cirBTC / USDC'],
-      ['Spend', '250.00 USDC'],
-      ['Route', '0x & KyberSwap v2 (Best Net)'],
-      ['Slippage floor', '0.50% max'],
-    ],
-    outcome: 'Aggregator quote verified. Guaranteed minimum received output enforced on-chain.',
+    cmd: 'buy 250 USDC of cirBTC',
+    desc: 'Best net routing through 0x & KyberSwap with atomic slippage limit.',
   },
   {
     label: 'Limit Order',
-    command: 'limit buy cirBTC 50 USDC at 72000',
-    intent: 'Conditional Limit · Escrowed',
-    lines: [
-      ['Type', 'Limit Buy'],
-      ['Target price', '72,000 USDC'],
-      ['Escrow amount', '50.00 USDC'],
-      ['Validity', '7 Days (Cancel anytime)'],
-    ],
-    outcome: 'Escrowed in ArcTradeOrders. Permissionless keeper executes when oracle crosses 72,000.',
+    cmd: 'limit buy cirBTC 100 USDC at 88500',
+    desc: 'On-chain escrow order filled by keepers when oracle price <= 88,500.',
   },
   {
     label: 'Stop Loss',
-    command: 'stop loss 0.25 cirBTC at 79000',
-    intent: 'Stop-Loss · Chainlink Trigger',
-    lines: [
-      ['Type', 'Stop-Loss Sell'],
-      ['Trigger price', '79,000 USDC'],
-      ['Asset locked', '0.25 cirBTC'],
-      ['Keeper fee', '0.10% of output (capped)'],
-    ],
-    outcome: 'Automated stop-loss active. Runs automatically even when your browser is closed.',
+    cmd: 'stop loss 0.2 cirBTC at 86000',
+    desc: 'Automated capital protection triggered on Chainlink price feed.',
   },
   {
     label: 'DCA Accumulation',
-    command: 'dca 10 USDC into WETH daily for 30 days',
-    intent: 'Recurring DCA · Automated',
-    lines: [
-      ['Action', 'Recurring Buy (WETH)'],
-      ['Interval', 'Daily (30 executions)'],
-      ['Budget escrow', '300.00 USDC'],
-      ['Price cap', 'Optional ceiling protection'],
-    ],
-    outcome: 'DCA contract plan active. Keeper executes daily ticks. Unspent balance refundable anytime.',
+    cmd: 'dca 20 USDC into WETH daily for 14 days',
+    desc: 'Scheduled recurring execution with refundable unspent balance.',
   },
 ]
 
-function Hero({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
-  const [selectedIdx, setSelectedIdx] = useState(0)
-  const [customText, setCustomText] = useState('')
-  const [activeStep, setActiveStep] = useState<'prompt' | 'plan' | 'done'>('plan')
-  const tokens = useQuery({ queryKey: ['landing-tokens'], queryFn: () => fetchTokenList(5042), staleTime: 10 * 60_000, retry: 1 })
-  const tokenCount = tokens.data ? Math.max(0, tokens.data.length - 1) : null
+function HeroTerminal({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
+  const [activeTab, setActiveTab] = useState<TerminalTab>('prompt')
+  const [inputVal, setInputVal] = useState('buy 250 USDC of cirBTC')
+  const [copied, setCopied] = useState(false)
+  const { animate } = useSettings()
 
-  const currentPreset = PROMPT_PRESETS[selectedIdx]
-  const displayCommand = customText || currentPreset.command
+  // Parse live typed prompt using actual deterministic parser
+  const parsed = useMemo(() => parseCommand(inputVal), [inputVal])
 
-  const handleSelectPreset = (idx: number) => {
-    setSelectedIdx(idx)
-    setCustomText('')
-    setActiveStep('plan')
+  const handleSelectPreset = (p: PresetCommand) => {
+    setInputVal(p.cmd)
   }
 
-  const handleRunPreset = () => {
-    setAgentPrefill(displayCommand)
+  const handleCopy = () => {
+    navigator.clipboard.writeText(inputVal)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const handleExecute = () => {
+    setAgentPrefill(inputVal)
     onAgent()
   }
 
   return (
-    <section className="pt-2 sm:pt-6">
-      {/* Hyperliquid network header pill */}
-      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
-        <div className="inline-flex items-center gap-2 border border-line bg-panel px-3 py-1 font-mono font-bold text-ink">
-          <span className="h-2 w-2 animate-pulse bg-up" aria-hidden="true" />
+    <section className="pt-2 sm:pt-4">
+      {/* Network identifier banner */}
+      <div className="mb-5 flex flex-wrap items-center gap-2">
+        <div className="inline-flex items-center gap-2 border border-line bg-panel px-3 py-1 font-mono text-xs font-bold text-ink">
+          <span className="h-2 w-2 bg-up" aria-hidden="true" />
           <span>BUILT ON ARC BLOCKCHAIN</span>
         </div>
-        <span className="font-mono text-[11px] text-mute">
-          Chain ID: 5042 · Gas Token: USDC · Deterministic Finality
+        <span className="font-mono text-xs text-mute">
+          Chain ID 5042 · Unified 18-dec / 6-dec USDC Gas · Smart Escrow v2
         </span>
       </div>
 
       <div className="grid items-start gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:gap-10">
+        {/* Left: Direct Value Proposition */}
         <div>
-          <h1 className="text-4xl font-display uppercase leading-[0.98] sm:text-6xl lg:text-[4.2rem]">
+          <h1 className="text-4xl font-display uppercase leading-[0.98] sm:text-6xl lg:text-[4.1rem]">
             The Agentic Trading Terminal on Arc.
           </h1>
           <p className="mt-5 max-w-xl text-sm leading-relaxed text-mute sm:text-base">
-            High-performance non-custodial trading on the Arc network. Execute best-route market swaps, automated conditional orders (Limit, Stop-Loss, Trailing, OCO), and recurring DCA via smart contract escrow or natural-language prompts.
+            High-performance non-custodial trading on Arc L1. Route spot swaps across DEX aggregators, register decentralized conditional orders (Limit, Stop, Trailing, OCO), and execute via natural-language prompts with verified safety readback.
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -148,206 +205,378 @@ function Hero({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }
               onClick={onAgent}
               className="press inline-flex min-h-[50px] items-center gap-2 border border-line bg-panel px-6 text-sm font-bold text-ink shadow-hard-sm hover:bg-raised"
             >
-              <TerminalIcon className="h-4 w-4" />
+              <TerminalIcon className="h-4 w-4 text-ink" />
               <span>AGENT STATION</span>
             </button>
           </div>
 
-          {/* Quick proof badges */}
-          <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-line/60 pt-4 text-xs font-mono text-mute">
-            <div className="flex items-center gap-1.5">
-              <Check className="h-3.5 w-3.5 text-up" />
-              <span>100% Self-Custodial Escrow</span>
+          {/* Hard architectural trust facts */}
+          <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 border-t border-line/60 pt-5 font-mono text-xs">
+            <div className="border border-line bg-panel p-2.5">
+              <span className="block text-[10px] uppercase font-bold text-mute">Custody</span>
+              <span className="mt-0.5 block font-bold text-ink">100% Non-Custodial</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Check className="h-3.5 w-3.5 text-up" />
-              <span>0x & KyberSwap v2 Aggregation</span>
+            <div className="border border-line bg-panel p-2.5">
+              <span className="block text-[10px] uppercase font-bold text-mute">Keeper Fee</span>
+              <span className="mt-0.5 block font-bold text-ink">0.10% Cap (Lower-Only)</span>
             </div>
-            <div className="flex items-center gap-1.5">
-              <Check className="h-3.5 w-3.5 text-up" />
-              <span>Chainlink Oracle Triggers</span>
+            <div className="border border-line bg-panel p-2.5 col-span-2 sm:col-span-1">
+              <span className="block text-[10px] uppercase font-bold text-mute">Finality</span>
+              <span className="mt-0.5 block font-bold text-up">Sub-Second Deterministic</span>
             </div>
           </div>
         </div>
 
-        {/* Hyperliquid-style Prompt & Agent Interactive Showcase */}
+        {/* Right: Interactive Terminal Sandbox */}
         <div className="border border-line bg-panel shadow-hard-lg">
-          <div className="flex items-center justify-between border-b border-line bg-ink px-4 py-2.5 text-canvas">
-            <div className="flex items-center gap-2 font-mono text-xs font-bold uppercase tracking-wider">
-              <TerminalIcon className="h-4 w-4 text-accent" />
-              <span>Agent Prompt Terminal</span>
-            </div>
-            <span className="font-mono text-[10px] uppercase text-canvas/70">
-              Arc Native Execution
-            </span>
+          {/* Header tab navigation */}
+          <div className="flex border-b border-line bg-ink text-canvas">
+            <button
+              onClick={() => setActiveTab('prompt')}
+              className={clsx(
+                'flex items-center gap-1.5 px-4 py-2.5 font-mono text-xs font-bold uppercase transition-colors',
+                activeTab === 'prompt' ? 'bg-panel text-ink border-b-2 border-accent' : 'text-canvas/70 hover:text-canvas',
+              )}
+            >
+              <TerminalIcon className="h-3.5 w-3.5" />
+              <span>Prompt Engine</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('orderbook')}
+              className={clsx(
+                'flex items-center gap-1.5 px-4 py-2.5 font-mono text-xs font-bold uppercase transition-colors',
+                activeTab === 'orderbook' ? 'bg-panel text-ink border-b-2 border-accent' : 'text-canvas/70 hover:text-canvas',
+              )}
+            >
+              <Activity className="h-3.5 w-3.5" />
+              <span>Order Depth</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('lifecycle')}
+              className={clsx(
+                'flex items-center gap-1.5 px-4 py-2.5 font-mono text-xs font-bold uppercase transition-colors',
+                activeTab === 'lifecycle' ? 'bg-panel text-ink border-b-2 border-accent' : 'text-canvas/70 hover:text-canvas',
+              )}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              <span>Lifecycle</span>
+            </button>
           </div>
 
           <div className="p-4 sm:p-5">
-            {/* Interactive Prompt Selector Bar */}
-            <div className="mb-3">
-              <span className="mb-1.5 block font-mono text-[11px] font-bold text-mute uppercase">
-                Select Prompt Scenario:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                {PROMPT_PRESETS.map((p, idx) => (
-                  <button
-                    key={p.label}
-                    onClick={() => handleSelectPreset(idx)}
-                    className={clsx(
-                      'border border-line px-2.5 py-1 font-mono text-xs font-bold transition',
-                      selectedIdx === idx
-                        ? 'bg-accent text-accent-ink shadow-hard-sm'
-                        : 'bg-raised text-mute hover:text-ink',
-                    )}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Prompt Input Box */}
-            <div className="border border-line bg-ink p-3 text-canvas font-mono text-xs sm:text-sm">
-              <div className="flex items-center gap-2 text-accent">
-                <span className="font-bold">&gt;</span>
-                <input
-                  type="text"
-                  value={displayCommand}
-                  onChange={(e) => setCustomText(e.target.value)}
-                  className="w-full bg-transparent text-canvas outline-none"
-                  placeholder="Type trading command or prompt..."
-                />
-              </div>
-            </div>
-
-            {/* Simulated Live Plan Synthesis */}
-            <div className="mt-3 border border-line bg-raised p-3">
-              <div className="flex items-center justify-between border-b border-line/50 pb-2">
-                <span className="font-mono text-[11px] font-bold uppercase text-ink">
-                  Intent: {currentPreset.intent}
-                </span>
-                <span className="inline-block bg-accent px-1.5 py-0.5 font-mono text-[10px] font-bold text-accent-ink">
-                  Verified Plan
-                </span>
-              </div>
-
-              <div className="mt-2 divide-y divide-line/30">
-                {currentPreset.lines.map(([k, v]) => (
-                  <div key={k} className="flex justify-between py-1 font-mono text-xs">
-                    <span className="text-mute">{k}</span>
-                    <span className="font-bold text-ink">{v}</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-line/40 pt-2.5">
-                <span className="text-[11px] text-mute font-mono">
-                  Wallet signature required for execution
-                </span>
-                <button
-                  onClick={handleRunPreset}
-                  className="press border border-line bg-accent px-3 py-1 font-mono text-xs font-bold text-accent-ink shadow-hard-sm hover:opacity-90"
+            <AnimatePresence mode="wait">
+              {activeTab === 'prompt' && (
+                <motion.div
+                  key="tab-prompt"
+                  initial={animate ? { opacity: 0, y: 8 } : undefined}
+                  animate={animate ? { opacity: 1, y: 0 } : undefined}
+                  exit={animate ? { opacity: 0, y: -8 } : undefined}
+                  transition={{ duration: 0.15 }}
                 >
-                  Execute in Agent &gt;
-                </button>
-              </div>
-            </div>
+                  {/* Preset quick buttons */}
+                  <div className="mb-3">
+                    <span className="block font-mono text-[11px] font-bold text-mute uppercase mb-1.5">
+                      Prompt Presets:
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {PRESET_COMMANDS.map((p) => (
+                        <button
+                          key={p.label}
+                          onClick={() => handleSelectPreset(p)}
+                          className={clsx(
+                            'border border-line px-2.5 py-1 font-mono text-xs font-bold transition-all',
+                            inputVal === p.cmd
+                              ? 'bg-accent text-accent-ink shadow-hard-sm'
+                              : 'bg-raised text-mute hover:text-ink hover:bg-raised/80',
+                          )}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            <div className="mt-3 text-[11px] text-mute flex items-center justify-between">
-              <span>Status: Ready on Arc Network</span>
-              <span className="font-mono text-up font-bold">Strict Grammar Gate Active</span>
-            </div>
+                  {/* Input console */}
+                  <div className="border border-line bg-ink p-3 text-canvas font-mono text-xs sm:text-sm">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-accent">&gt;</span>
+                      <input
+                        type="text"
+                        value={inputVal}
+                        onChange={(e) => setInputVal(e.target.value)}
+                        className="w-full bg-transparent text-canvas outline-none"
+                        placeholder="Enter trading command..."
+                      />
+                      <button
+                        onClick={handleCopy}
+                        title="Copy command"
+                        className="text-canvas/60 hover:text-accent transition-colors"
+                      >
+                        {copied ? <Check className="h-4 w-4 text-up" /> : <Copy className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Real deterministic AST synthesis */}
+                  <div className="mt-3 border border-line bg-raised p-3">
+                    <div className="flex items-center justify-between border-b border-line/40 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-bold text-ink uppercase">
+                          {parsed.ok ? `Parsed: ${parsed.intent.kind}` : 'Parser Warning'}
+                        </span>
+                      </div>
+                      <span
+                        className={clsx(
+                          'px-2 py-0.5 font-mono text-[10px] font-bold',
+                          parsed.ok ? 'bg-accent text-accent-ink' : 'bg-down/20 text-down',
+                        )}
+                      >
+                        {parsed.ok ? 'Strict Grammar Match' : 'Unrecognized'}
+                      </span>
+                    </div>
+
+                    {parsed.ok ? (
+                      <div className="mt-2.5 space-y-1 font-mono text-xs">
+                        <div className="flex justify-between py-0.5">
+                          <span className="text-mute">Action Type:</span>
+                          <span className="font-bold text-ink uppercase">{parsed.intent.kind}</span>
+                        </div>
+                        {'token' in parsed.intent && (
+                          <div className="flex justify-between py-0.5">
+                            <span className="text-mute">Token Target:</span>
+                            <span className="font-bold text-ink">{parsed.intent.token}</span>
+                          </div>
+                        )}
+                        {'price' in parsed.intent && (
+                          <div className="flex justify-between py-0.5">
+                            <span className="text-mute">Execution Trigger:</span>
+                            <span className="font-bold text-ink">${parsed.intent.price}</span>
+                          </div>
+                        )}
+                        {'frequency' in parsed.intent && (
+                          <div className="flex justify-between py-0.5">
+                            <span className="text-mute">Frequency &amp; Cadence:</span>
+                            <span className="font-bold text-ink">
+                              {parsed.intent.frequency} ({parsed.intent.days} days)
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between py-0.5">
+                          <span className="text-mute">Gas Settlement:</span>
+                          <span className="font-bold text-up">Native USDC (No wrapping)</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-2 font-mono text-xs text-down">{parsed.error}</p>
+                    )}
+
+                    <div className="mt-3 flex items-center justify-between border-t border-line/30 pt-2.5">
+                      <span className="font-mono text-[11px] text-mute">
+                        Requires explicit wallet signature
+                      </span>
+                      <button
+                        onClick={handleExecute}
+                        className="press border border-line bg-accent px-3 py-1 font-mono text-xs font-bold text-accent-ink shadow-hard-sm hover:opacity-95"
+                      >
+                        Open in Agent &gt;
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {activeTab === 'orderbook' && (
+                <motion.div
+                  key="tab-orderbook"
+                  initial={animate ? { opacity: 0, y: 8 } : undefined}
+                  animate={animate ? { opacity: 1, y: 0 } : undefined}
+                  exit={animate ? { opacity: 0, y: -8 } : undefined}
+                  transition={{ duration: 0.15 }}
+                  className="space-y-3 font-mono text-xs"
+                >
+                  <div className="flex items-center justify-between border-b border-line pb-2">
+                    <span className="font-bold text-ink uppercase">cirBTC/USDC Order Depth</span>
+                    <span className="text-[11px] text-mute">Chainlink Feed: 91,240.50</span>
+                  </div>
+
+                  {/* Asks (Sells) */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-down/80">
+                      <span>91,320.00</span>
+                      <span className="num">1.45 cirBTC</span>
+                      <div className="w-16 bg-down/20 h-2 self-center rounded-none" />
+                    </div>
+                    <div className="flex justify-between text-down/80">
+                      <span>91,280.00</span>
+                      <span className="num">0.82 cirBTC</span>
+                      <div className="w-10 bg-down/20 h-2 self-center rounded-none" />
+                    </div>
+                  </div>
+
+                  {/* Mid Spread */}
+                  <div className="border-y border-line/40 py-1.5 text-center font-bold text-ink bg-raised">
+                    Spread: 0.04% · Keeper Trigger Zone
+                  </div>
+
+                  {/* Bids (Buys) */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-up/90">
+                      <span>91,220.00</span>
+                      <span className="num">2.10 cirBTC</span>
+                      <div className="w-20 bg-up/20 h-2 self-center rounded-none" />
+                    </div>
+                    <div className="flex justify-between text-up/90">
+                      <span>91,180.00</span>
+                      <span className="num">3.50 cirBTC</span>
+                      <div className="w-32 bg-up/20 h-2 self-center rounded-none" />
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-mute pt-1">
+                    Orders remain in ArcTradeOrders escrow until keepers invoke fill transactions upon oracle trigger crossing.
+                  </p>
+                </motion.div>
+              )}
+
+              {activeTab === 'lifecycle' && (
+                <motion.div
+                  key="tab-lifecycle"
+                  initial={animate ? { opacity: 0, y: 8 } : undefined}
+                  animate={animate ? { opacity: 1, y: 0 } : undefined}
+                  exit={animate ? { opacity: 0, y: -8 } : undefined}
+                  transition={{ duration: 0.15 }}
+                  className="space-y-3 font-mono text-xs"
+                >
+                  <div className="border-l-2 border-accent pl-3 py-1">
+                    <span className="text-[10px] font-bold text-mute uppercase block">Stage 1</span>
+                    <span className="font-bold text-ink">Client Parse &amp; Simulation</span>
+                    <p className="text-[11px] text-mute mt-0.5">Intent resolved by strict grammar. Balance verified.</p>
+                  </div>
+                  <div className="border-l-2 border-line pl-3 py-1">
+                    <span className="text-[10px] font-bold text-mute uppercase block">Stage 2</span>
+                    <span className="font-bold text-ink">Wallet Cryptographic Signature</span>
+                    <p className="text-[11px] text-mute mt-0.5">Wagmi/Viem sends order payload to ArcTradeOrders contract.</p>
+                  </div>
+                  <div className="border-l-2 border-line pl-3 py-1">
+                    <span className="text-[10px] font-bold text-mute uppercase block">Stage 3</span>
+                    <span className="font-bold text-ink">Smart Escrow &amp; Keeper Watch</span>
+                    <p className="text-[11px] text-mute mt-0.5">Funds locked in escrow. Autonomous bots monitor Chainlink round data.</p>
+                  </div>
+                  <div className="border-l-2 border-line pl-3 py-1">
+                    <span className="text-[10px] font-bold text-mute uppercase block">Stage 4</span>
+                    <span className="font-bold text-up">Settlement &amp; Output Delivery</span>
+                    <p className="text-[11px] text-mute mt-0.5">Order fills. Bought tokens delivered directly to your wallet.</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
-      </div>
-
-      {/* Hyperliquid-style Live Stats Strip (Fluid Width) */}
-      <div className="mt-12 grid grid-cols-2 border border-line bg-panel lg:grid-cols-5 shadow-hard-sm">
-        <div className="border-b border-line p-4 sm:p-5 sm:border-b-0 lg:border-r">
-          <span className="block font-mono text-[11px] font-bold text-mute uppercase">L1 Ecosystem</span>
-          <span className="mt-1 block font-display text-xl sm:text-2xl text-ink">Arc Blockchain</span>
-          <span className="text-[11px] text-mute font-mono">Chain 5042 / 5042002</span>
-        </div>
-        <div className="border-b border-line p-4 sm:p-5 sm:border-b-0 border-l border-line lg:border-r">
-          <span className="block font-mono text-[11px] font-bold text-mute uppercase">Routable Assets</span>
-          <span className="mt-1 block font-display text-xl sm:text-2xl text-ink">
-            {tokenCount === null ? (tokens.isError ? '60+' : '...') : `${tokenCount}+ Tokens`}
-          </span>
-          <span className="text-[11px] text-mute font-mono">0x & KyberSwap Registry</span>
-        </div>
-        <div className="border-b border-line p-4 sm:p-5 sm:border-b-0 lg:border-r border-t sm:border-t-0">
-          <span className="block font-mono text-[11px] font-bold text-mute uppercase">Order Architecture</span>
-          <span className="mt-1 block font-display text-xl sm:text-2xl text-ink">6 Types + DCA</span>
-          <span className="text-[11px] text-mute font-mono">On-chain Escrow Contract</span>
-        </div>
-        <div className="border-b border-line p-4 sm:p-5 sm:border-b-0 border-l border-line lg:border-r border-t sm:border-t-0">
-          <span className="block font-mono text-[11px] font-bold text-mute uppercase">Execution Fee</span>
-          <span className="mt-1 block font-display text-xl sm:text-2xl text-ink">0.10% Cap</span>
-          <span className="text-[11px] text-mute font-mono">Permissible Lower-Only</span>
-        </div>
-        <div className="col-span-2 p-4 sm:p-5 lg:col-span-1 border-t sm:border-t lg:border-t-0">
-          <span className="block font-mono text-[11px] font-bold text-mute uppercase">Custody Protocol</span>
-          <span className="mt-1 block font-display text-xl sm:text-2xl text-up">100% Non-Custodial</span>
-          <span className="text-[11px] text-mute font-mono">Direct Wallet Authorization</span>
         </div>
       </div>
     </section>
   )
 }
 
-// ---------- 2. core terminal features (Hyperliquid matrix) ----------
+// ---------- 3. TERMINAL ENGINES MATRIX (HYPERLIQUID STYLE) ----------
 
-const TERMINAL_MODULES = [
+interface ModuleInfo {
+  code: string
+  title: string
+  tag: string
+  desc: string
+  specs: [string, string][]
+}
+
+const TERMINAL_ENGINES: ModuleInfo[] = [
   {
     code: 'AGG-01',
     title: 'Spot DEX Aggregation',
     tag: 'Best Output Routing',
-    desc: 'Parallel quoting engine querying 0x AllowanceHolder and KyberSwap v2. Quotes are evaluated by net guaranteed tokens minus gas costs with instant on-chain simulation before presentation.',
+    desc: 'Simultaneous liquidity discovery across 0x AllowanceHolder and KyberSwap v2. Evaluates net output factoring gas costs with instant client-side simulation.',
+    specs: [
+      ['Routers', '0x Cancun + KyberSwap v2'],
+      ['Slippage floor', 'Configurable 0.1% to 5.0%'],
+      ['Asset pool', '60+ routable tokens on Arc'],
+    ],
   },
   {
     code: 'ORD-02',
-    title: 'Escrowed Conditional Orders',
+    title: 'On-Chain Conditional Escrow',
     tag: 'Limit · Stops · OCO',
-    desc: 'Limit, Stop-Loss, Take-Profit, Stop-Limit, Trailing-Stop, and OCO. User funds are safely escrowed directly in ArcTradeOrders.sol and filled automatically by decentralized keepers.',
+    desc: 'Limit, Stop-Loss, Take-Profit, Stop-Limit, Trailing-Stop, and OCO. Assets are securely escrowed in ArcTradeOrders.sol and filled by keepers on oracle cross.',
+    specs: [
+      ['Contract', 'ArcTradeOrders v2 (23,778 B)'],
+      ['Oracle trigger', 'Chainlink round validation'],
+      ['Cancellation', 'Instant 100% refund at any block'],
+    ],
   },
   {
     code: 'DCA-03',
     title: 'Automated DCA Engine',
     tag: 'Recurring Purchases',
-    desc: 'Dollar-cost averaging schedules across hourly, daily, weekly, or monthly cadences. Supports maximum price ceiling guards so capital is preserved during localized market spikes.',
+    desc: 'Automate dollar-cost averaging on Arc. Configure hourly, daily, weekly, or monthly execution with maximum price ceiling caps to prevent buying into spikes.',
+    specs: [
+      ['Intervals', 'Hourly, Daily, Weekly, Monthly'],
+      ['Price safety', 'Optional ceiling cap gate'],
+      ['Unspent budget', 'Withdraw principal anytime'],
+    ],
   },
   {
     code: 'AGT-04',
-    title: 'Autonomous Agent Station',
-    tag: 'Deterministic Prompts',
-    desc: 'Natural language trading terminal driven by a formal, deterministic command grammar. Resolves symbols, builds verified execution plans, enforces daily budgets, and protects private keys.',
+    title: 'Deterministic Agent Station',
+    tag: 'Zero Hallucinations',
+    desc: 'A formal grammar compiler that converts conversational English instructions directly into verified on-chain trading plans. No LLM key required.',
+    specs: [
+      ['Grammar', 'Strict, deterministic parser'],
+      ['Safety readback', 'Explicit confirmation prompt'],
+      ['Keys', 'Never leaves your browser wallet'],
+    ],
   },
 ]
 
-function CoreTerminalFeatures({ onSelectAction }: { onSelectAction: (cmd: string) => void }) {
+function TerminalEnginesMatrix({ onSelectModule }: { onSelectModule: (target: 'trade' | 'agent') => void }) {
   return (
     <section>
       <SectionHeader
         kicker="Terminal Matrix"
         title="Engineered for high-frequency on-chain control."
-        desc="All trading execution modules run on Arc blockchain infrastructure with zero counterparty custodial risk."
+        desc="All execution modules run directly on Arc blockchain infrastructure with zero counterparty custodial risk."
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {TERMINAL_MODULES.map((mod) => (
-          <Reveal key={mod.code}>
-            <div className="flex h-full flex-col justify-between border border-line bg-panel p-5 shadow-hard-sm hover:bg-raised/50 transition">
+        {TERMINAL_ENGINES.map((eng) => (
+          <Reveal key={eng.code}>
+            <div className="group flex h-full flex-col justify-between border border-line bg-panel p-5 shadow-hard-sm hover:border-line hover:shadow-hard transition-all duration-150">
               <div>
                 <div className="flex items-center justify-between border-b border-line pb-2.5">
-                  <span className="font-mono text-xs font-bold text-mute">{mod.code}</span>
-                  <span className="bg-raised border border-line px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink">
-                    {mod.tag}
+                  <span className="font-mono text-xs font-bold text-mute">{eng.code}</span>
+                  <span className="border border-line bg-raised px-1.5 py-0.5 font-mono text-[10px] font-bold text-ink">
+                    {eng.tag}
                   </span>
                 </div>
-                <h3 className="mt-3 text-lg font-bold font-display uppercase tracking-tight text-ink">
-                  {mod.title}
+                <h3 className="mt-3 font-display text-lg font-bold uppercase tracking-tight text-ink">
+                  {eng.title}
                 </h3>
-                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{mod.desc}</p>
+                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{eng.desc}</p>
+              </div>
+
+              <div className="mt-4 border-t border-line/40 pt-3">
+                <div className="space-y-1 font-mono text-[11px]">
+                  {eng.specs.map(([k, v]) => (
+                    <div key={k} className="flex justify-between text-mute">
+                      <span>{k}:</span>
+                      <span className="font-bold text-ink">{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => onSelectModule(eng.code === 'AGT-04' ? 'agent' : 'trade')}
+                  className="press mt-4 flex w-full items-center justify-center gap-1.5 border border-line bg-raised py-2 font-mono text-xs font-bold text-ink group-hover:bg-accent group-hover:text-accent-ink transition-colors"
+                >
+                  <span>Launch Module</span>
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </button>
               </div>
             </div>
           </Reveal>
@@ -357,28 +586,43 @@ function CoreTerminalFeatures({ onSelectAction }: { onSelectAction: (cmd: string
   )
 }
 
-// ---------- 3. Built on Arc Ecosystem Showcase ----------
+// ---------- 4. BUILT ON ARC L1 SPECIFICATIONS (TECHNICAL BLUEPRINT) ----------
 
-function BuiltOnArcShowcase() {
-  const ARC_PILLARS = [
-    {
-      title: 'Native USDC Gas Economy',
-      detail: 'On Arc, the native gas currency is USDC at 18 decimals, unified with 6-decimal ERC-20 USDC. Traders maintain a single currency pool for fees and liquidity without wrapping.',
-    },
-    {
-      title: 'Sub-Second Finality',
-      detail: 'Arc features deterministic block finality. Keepers can execute triggered limit and trailing orders without the latency, reorgs, or MEV sandwich vulnerabilities found on legacy L1s.',
-    },
-    {
-      title: 'Chainlink Data Feeds',
-      detail: 'On-chain order condition validation relies directly on Arc Chainlink oracles with round completeness checks (answeredInRound >= roundId) and maximum staleness constraints.',
-    },
-    {
-      title: 'Permissionless Keeper Network',
-      detail: 'Execution is open to any autonomous keeper node. Keepers earn up to 0.10% protocol fees for executing valid orders, incentivizing a decentralized bot ecosystem.',
-    },
-  ]
+interface ArcSpec {
+  title: string
+  category: string
+  fact: string
+  techDetail: string
+}
 
+const ARC_SPECS: ArcSpec[] = [
+  {
+    title: 'Native USDC Gas Economy',
+    category: 'Settlement Architecture',
+    fact: 'Gas paid natively in 18-decimal USDC, unified with 6-decimal ERC-20 balances.',
+    techDetail: 'Eliminates synthetic wrapper tokens (WETH). All fee calculations and liquid balance pools are denominated directly in USD Coin.',
+  },
+  {
+    title: 'Sub-Second Deterministic Finality',
+    category: 'Consensus & Latency',
+    fact: 'Zero mempool front-running or sandwich attacks on conditional triggers.',
+    techDetail: 'Arc deterministic block finality ensures keepers submit triggers without competing against predatory MEV searcher bundles.',
+  },
+  {
+    title: 'Chainlink Data Feed Verification',
+    category: 'Oracle Integrity',
+    fact: 'Smart contract enforces round completeness and staleness checks on every fill.',
+    techDetail: 'ArcTradeOrders.sol verifies answeredInRound >= roundId and checks heartbeats against configured threshold limits.',
+  },
+  {
+    title: 'Permissionless Keeper Network',
+    category: 'Execution Protocol',
+    fact: 'Autonomous decentralized execution with hardcoded 0.10% fee cap.',
+    techDetail: 'Execution functions are open to any participant. The protocol fee can only ever be lowered by governance, never raised.',
+  },
+]
+
+function ArcInfrastructureBlueprint() {
   return (
     <section>
       <SectionHeader
@@ -388,40 +632,50 @@ function BuiltOnArcShowcase() {
       />
 
       <div className="border border-line bg-panel shadow-hard">
-        <div className="grid border-b border-line bg-ink px-4 py-3 text-canvas sm:grid-cols-2">
+        <div className="flex items-center justify-between border-b border-line bg-ink px-4 py-3 text-canvas">
           <span className="font-mono text-xs font-bold uppercase tracking-wider text-accent">
-            Arc Architectural Advantage
+            Arc L1 Technical Specifications
           </span>
-          <span className="hidden sm:block text-right font-mono text-xs text-canvas/70">
-            Network Specification
+          <span className="font-mono text-xs text-canvas/70">
+            Chain 5042 (Mainnet) · Chain 5042002 (Testnet)
           </span>
         </div>
 
         <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-y-0 sm:divide-x">
           <div className="divide-y divide-line">
-            {ARC_PILLARS.slice(0, 2).map((p) => (
-              <div key={p.title} className="p-5 sm:p-6">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 bg-up" aria-hidden="true" />
-                  <h3 className="font-bold font-display uppercase tracking-tight text-ink sm:text-base">
-                    {p.title}
-                  </h3>
-                </div>
-                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{p.detail}</p>
+            {ARC_SPECS.slice(0, 2).map((s) => (
+              <div key={s.title} className="p-5 sm:p-6">
+                <span className="font-mono text-[10px] font-bold uppercase text-mute tracking-wider block">
+                  {s.category}
+                </span>
+                <h3 className="mt-1 font-display text-base font-bold uppercase text-ink sm:text-lg">
+                  {s.title}
+                </h3>
+                <p className="mt-2 text-xs sm:text-sm font-bold text-ink leading-relaxed">
+                  {s.fact}
+                </p>
+                <p className="mt-1.5 text-xs text-mute leading-relaxed font-mono">
+                  {s.techDetail}
+                </p>
               </div>
             ))}
           </div>
 
           <div className="divide-y divide-line">
-            {ARC_PILLARS.slice(2, 4).map((p) => (
-              <div key={p.title} className="p-5 sm:p-6">
-                <div className="flex items-center gap-2">
-                  <span className="h-2 w-2 bg-up" aria-hidden="true" />
-                  <h3 className="font-bold font-display uppercase tracking-tight text-ink sm:text-base">
-                    {p.title}
-                  </h3>
-                </div>
-                <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{p.detail}</p>
+            {ARC_SPECS.slice(2, 4).map((s) => (
+              <div key={s.title} className="p-5 sm:p-6">
+                <span className="font-mono text-[10px] font-bold uppercase text-mute tracking-wider block">
+                  {s.category}
+                </span>
+                <h3 className="mt-1 font-display text-base font-bold uppercase text-ink sm:text-lg">
+                  {s.title}
+                </h3>
+                <p className="mt-2 text-xs sm:text-sm font-bold text-ink leading-relaxed">
+                  {s.fact}
+                </p>
+                <p className="mt-1.5 text-xs text-mute leading-relaxed font-mono">
+                  {s.techDetail}
+                </p>
               </div>
             ))}
           </div>
@@ -431,117 +685,72 @@ function BuiltOnArcShowcase() {
   )
 }
 
-// ---------- 4. Agentic Prompt Workflow Section ----------
+// ---------- 5. SECURITY & CLIENT SOVEREIGNTY LEDGER ----------
 
-function AgenticWorkflow({ onAgent }: { onAgent: () => void }) {
-  const STEPS = [
-    {
-      step: '01',
-      title: 'Prompt or Command',
-      desc: 'Type your intent in plain language ("buy $100 of btc if it drops 5%") or use formal terminal commands. No external LLM key is needed.',
-    },
-    {
-      step: '02',
-      title: 'Deterministic Verification',
-      desc: 'The browser parser validates token feeds, checks your real wallet balance, quotes current aggregator liquidity, and calculates exact minimum outputs.',
-    },
-    {
-      step: '03',
-      title: 'Readback Confirmation',
-      desc: 'The agent presents an exact numeric breakdown and explicitly asks "Is this exactly what you want?". You reply yes or click cancel.',
-    },
-    {
-      step: '04',
-      title: 'On-Chain Execution',
-      desc: 'Your connected Web3 wallet prompts for signature. The agent never holds private keys, cannot bypass approval, and respects custom daily spending caps.',
-    },
-  ]
-
+function SecurityProtocol() {
   return (
     <section>
       <SectionHeader
-        kicker="Agentic Workflow"
-        title="How prompt-driven trading operates."
-        desc="Safe, deterministic execution pipeline connecting conversational intents directly to smart contracts."
-      />
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {STEPS.map((s) => (
-          <div key={s.step} className="border border-line bg-panel p-5 shadow-hard-sm">
-            <span className="font-mono text-xs font-bold text-accent-ink bg-accent px-2 py-0.5 inline-block">
-              STEP {s.step}
-            </span>
-            <h3 className="mt-3 text-base font-bold font-display uppercase text-ink">
-              {s.title}
-            </h3>
-            <p className="mt-2 text-xs sm:text-sm text-mute leading-relaxed">{s.desc}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-6 flex justify-start">
-        <button
-          onClick={onAgent}
-          className="press inline-flex min-h-[46px] items-center gap-2 border border-line bg-ink px-5 text-xs sm:text-sm font-bold text-canvas shadow-hard hover:opacity-90"
-        >
-          <TerminalIcon className="h-4 w-4 text-accent" />
-          <span>OPEN AGENT STATION TO TRY PROMPTS</span>
-        </button>
-      </div>
-    </section>
-  )
-}
-
-// ---------- 5. Security & Trust Architecture ----------
-
-function SecurityMatrix() {
-  return (
-    <section>
-      <SectionHeader
-        kicker="Security Protocol"
+        kicker="Security Architecture"
         title="Non-custodial by contract design."
-        desc="Funds remain entirely within your wallet or locked in verified contract escrow."
+        desc="Assets remain entirely within your wallet or locked in verified smart contract escrow."
       />
 
       <div className="grid border border-line bg-panel shadow-hard md:grid-cols-2">
         <div className="p-5 sm:p-6">
           <div className="mb-2 inline-block border border-line bg-ink px-2.5 py-0.5 font-mono text-xs font-bold text-canvas">
-            YOUR WALLET &amp; PERMISSIONS
+            CLIENT-SIDE SOVEREIGNTY
           </div>
-          <h3 className="text-xl font-bold font-display uppercase">Client-Side Sovereignty</h3>
-          <ul className="mt-4 space-y-3 text-xs sm:text-sm text-ink/90">
+          <h3 className="font-display text-xl font-bold uppercase text-ink">
+            Your Wallet, Your Keys
+          </h3>
+          <ul className="mt-4 space-y-3 font-mono text-xs text-ink/90">
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 bg-ink" aria-hidden="true" />
-              <span><strong>Zero custodian deposits:</strong> Market swaps route directly from your wallet to aggregator routers in a single atomic transaction.</span>
+              <span>
+                <strong>Zero Centralized Custody:</strong> Market swaps route directly from your wallet to aggregator routers in a single atomic transaction.
+              </span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 bg-ink" aria-hidden="true" />
-              <span><strong>Mandatory transaction signing:</strong> Every single trade, approval, and order registration requires direct cryptographic signature from your wallet.</span>
+              <span>
+                <strong>Mandatory Transaction Signing:</strong> Every trade, allowance approval, and order registration requires direct cryptographic signature.
+              </span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 bg-ink" aria-hidden="true" />
-              <span><strong>Instant refundability:</strong> Orders and DCA balances can be cancelled at any time by the owner for an immediate 100% principal return, even when the contract is paused.</span>
+              <span>
+                <strong>Instant Refundability:</strong> Any active order or DCA plan can be cancelled at any block for an immediate 100% principal return.
+              </span>
             </li>
           </ul>
         </div>
 
         <div className="border-t border-line bg-raised/40 p-5 sm:p-6 md:border-l md:border-t-0">
           <div className="mb-2 inline-block border border-line bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-ink">
-            SMART CONTRACT VERIFICATION
+            SMART CONTRACT GUARANTEES
           </div>
-          <h3 className="text-xl font-bold font-display uppercase">On-Chain Guarantees</h3>
-          <ul className="mt-4 space-y-3 text-xs sm:text-sm text-mute">
+          <h3 className="font-display text-xl font-bold uppercase text-ink">
+            ArcTradeOrders Verification
+          </h3>
+          <ul className="mt-4 space-y-3 font-mono text-xs text-mute">
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 border border-line bg-canvas" aria-hidden="true" />
-              <span><strong>Balance delta verification:</strong> ArcTradeOrders checks exact token balance differences before and after execution to prevent fee-on-transfer and slippage exploits.</span>
+              <span>
+                <strong>Balance Delta Assertion:</strong> Exact token balance checks prevent fee-on-transfer discrepancies and slippage exploits.
+              </span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 border border-line bg-canvas" aria-hidden="true" />
-              <span><strong>Timelocked administration:</strong> Any operator changes (new token feeds or routers) require a public timelock delay (minimum 48h recommended for mainnet).</span>
+              <span>
+                <strong>Timelocked Configuration:</strong> Administrative changes (adding feeds or router targets) require public timelock notice.
+              </span>
             </li>
             <li className="flex items-start gap-2.5">
               <span className="mt-1 h-2 w-2 shrink-0 border border-line bg-canvas" aria-hidden="true" />
-              <span><strong>Irreversible fee policy:</strong> The 0.10% keeper fee can only ever be lowered by governance, never raised.</span>
+              <span>
+                <strong>Lower-Only Keeper Fee:</strong> The 0.10% protocol keeper fee can only ever be reduced by governance, never increased.
+              </span>
             </li>
           </ul>
         </div>
@@ -550,73 +759,7 @@ function SecurityMatrix() {
   )
 }
 
-// ---------- 6. Curated FAQ (Hyperliquid style) ----------
-
-const HYPER_FAQ = [
-  {
-    q: 'Does Lumarc hold user funds or custody private keys?',
-    a: 'No. Lumarc is entirely non-custodial. Market swaps execute atomic settlement through aggregator contracts directly to your wallet. Conditional orders and DCA plans escrow funds inside ArcTradeOrders.sol, where only you possess the authority to cancel, pause, or withdraw.',
-  },
-  {
-    q: 'How does prompt trading work without hallucinating orders?',
-    a: 'Lumarc uses a deterministic grammar engine rather than delegating trade creation to an unconstrained LLM. The agent parses your natural language prompt into exact parameters, quotes live Chainlink feeds and aggregator routes, builds a fixed plan, and requires your explicit confirmation before requesting wallet signature.',
-  },
-  {
-    q: 'How are conditional orders and DCA plans executed on Arc?',
-    a: 'Execution is permissionless. Independent keeper nodes continuously monitor oracle conditions and scheduled DCA intervals. When conditions are satisfied, a keeper submits the execution transaction and receives a protocol fee capped at 0.10%. Lumarc operates an integrated keeper, and any user can run their own.',
-  },
-  {
-    q: 'Can I test all features without risking real capital?',
-    a: 'Yes. Switch network to Arc Testnet in the top navigation. You can mint test tokens from the faucet, manipulate live test feeds to trigger limit or stop conditions, and observe keeper execution with zero financial risk.',
-  },
-] as const
-
-function CuratedFaq() {
-  const [open, setOpen] = useState<number | null>(0)
-  return (
-    <section>
-      <SectionHeader
-        kicker="FAQ"
-        title="Frequently asked questions."
-        desc="Core answers regarding non-custodial protocol mechanics, prompts, and execution on Arc."
-      />
-
-      <div className="border border-line bg-panel shadow-hard-sm">
-        {HYPER_FAQ.map((f, i) => (
-          <div key={f.q} className={clsx(i > 0 && 'border-t border-line')}>
-            <h3>
-              <button
-                onClick={() => setOpen(open === i ? null : i)}
-                aria-expanded={open === i}
-                className="flex min-h-[54px] w-full items-center justify-between gap-4 px-4 py-3.5 text-left font-sans text-sm sm:text-base font-bold hover:bg-raised transition"
-              >
-                <span>{f.q}</span>
-                <span className="num font-mono text-base font-bold" aria-hidden="true">
-                  {open === i ? '−' : '+'}
-                </span>
-              </button>
-            </h3>
-            <AnimatePresence initial={false}>
-              {open === i && (
-                <motion.div
-                  initial={{ height: 0, opacity: 0 }}
-                  animate={{ height: 'auto', opacity: 1 }}
-                  exit={{ height: 0, opacity: 0 }}
-                  transition={{ duration: 0.16 }}
-                  className="overflow-hidden"
-                >
-                  <p className="px-4 pb-4 text-xs sm:text-sm text-mute leading-relaxed">{f.a}</p>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-// ---------- 7. Hyperliquid-style Launch Banner (CTA) ----------
+// ---------- 6. LAUNCH BANNER (HYPERLIQUID STYLE) ----------
 
 function LaunchTerminalBanner({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
   return (
@@ -624,9 +767,9 @@ function LaunchTerminalBanner({ onTrade, onAgent }: { onTrade: () => void; onAge
       <div className="border border-line bg-ink p-6 text-canvas shadow-hard-lg sm:p-10 lg:p-12">
         <div className="flex flex-wrap items-center gap-2 mb-3">
           <span className="bg-accent text-accent-ink font-mono text-[10px] font-bold px-2 py-0.5 uppercase">
-            ARC NETWORK DEPLOYMENT
+            ARC L1 DEPLOYMENT
           </span>
-          <span className="text-canvas/70 font-mono text-xs">Testnet live · Mainnet ready</span>
+          <span className="text-canvas/70 font-mono text-xs">Testnet active · Mainnet configured</span>
         </div>
 
         <h2 className="text-3xl sm:text-5xl lg:text-6xl font-display uppercase leading-[0.98] max-w-3xl">
@@ -665,26 +808,22 @@ function LaunchTerminalBanner({ onTrade, onAgent }: { onTrade: () => void; onAge
   )
 }
 
-// ---------- main landing page export ----------
+// ---------- MAIN LANDING COMPONENT ----------
 
 export function Landing() {
   const { setPage } = useSettings()
-  const tryCommand = useCallback(
-    (command: string) => {
-      setAgentPrefill(command)
-      setPage('agent')
-    },
-    [setPage],
-  )
 
   return (
-    <div className="w-full space-y-16 sm:space-y-24 pb-12">
-      <Hero onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
-      <CoreTerminalFeatures onSelectAction={tryCommand} />
-      <BuiltOnArcShowcase />
-      <AgenticWorkflow onAgent={() => setPage('agent')} />
-      <SecurityMatrix />
-      <CuratedFaq />
+    <div className="w-full space-y-12 sm:space-y-20 pb-12">
+      <MarketTickerStrip />
+      <HeroTerminal onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
+      <TerminalEnginesMatrix
+        onSelectModule={(target) => {
+          setPage(target)
+        }}
+      />
+      <ArcInfrastructureBlueprint />
+      <SecurityProtocol />
       <LaunchTerminalBanner onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
     </div>
   )
