@@ -1,6 +1,6 @@
-# Lumarc
+# Tactora
 
-Lumarc: trade, automate and command on Arc. A non-custodial trading terminal: market swaps through a DEX aggregator, escrowed conditional orders (limit, stop-loss, take-profit, stop-limit, trailing stop, OCO), recurring buys (DCA), a wallet portfolio, a dashboard, a command-driven Agent Station, a settings page, and an owner admin page. The interface is a retro, neo-brutalist design (see [DESIGN.md](DESIGN.md)) that works like an app on phones, with a bottom tab bar.
+Tactora (tactora.xyz): AI-powered trading on Arc. A non-custodial trading terminal: market swaps through a DEX aggregator, escrowed conditional orders (limit, stop-loss, take-profit, stop-limit, trailing stop, OCO), recurring buys (DCA), a wallet portfolio, a dashboard, a command-driven Agent Station, a settings page, an owner admin page, and a platform dashboard for the operator (statistics, users, revenue, API keys; see [docs/platform-dashboard.md](docs/platform-dashboard.md)). The interface is a premium dark fintech design built from the logo colours (see [DESIGN.md](DESIGN.md)) that works like an app on phones, with a compact header and a bottom tab bar.
 
 
 ## Testnet test assets
@@ -19,13 +19,13 @@ Full documentation is in [docs/](docs/README.md): architecture, contract referen
 
 | Feature | Arc Testnet | Arc mainnet |
 | --- | --- | --- |
-| Wallet, balances, approvals | Yes | Yes |
+| Wallet, balances, approvals | Yes. Browser wallets, or a Circle passkey (fingerprint) wallet when a Client Key is set | Same |
 | Order contract | Deployed | You deploy and review it yourself |
 | Market swaps (0x) | Not supported by 0x | Needs a 0x API key |
 | Oracle-priced orders and DCA | Disabled: no Chainlink feeds | Needs feeds configured on your contract |
-| Charts | Reference data from Coinbase Exchange | Same |
+| Charts and prices | BTC, ETH, EURC from Coinbase Exchange | Coinbase for those three; every other listed token from free DexScreener and GeckoTerminal data when it has a liquid pool |
 
-Charts show a centralized-exchange reference price for the underlying asset, not an Arc pool price. The order book panel is replaced by live aggregator quotes at several sizes, because Arc liquidity is AMM-based.
+BTC, ETH and EURC charts show a centralized-exchange reference price, not an Arc pool price; other mainnet tokens show their best DEX pool. About a third of the listed tokens have no liquid pool and show only the aggregator quote, with no chart. The order book panel is replaced by live aggregator quotes at several sizes, because Arc liquidity is AMM-based. Every API key and account, with where to get it (all free tiers), is in [docs/api-keys.md](docs/api-keys.md).
 
 Orders keep funds in the contract. They run when a keeper submits them; there is no managed automation service on Arc today. You can run the built-in keeper or any third party can.
 
@@ -68,7 +68,7 @@ bun run check      # lint and typecheck
 | `RATE_LIMIT_SCALE` | Multiplier for per-client rate limits, default 1 |
 | `API_PORT` | Backend port, default 3001 |
 | `RPC_URL_Arc_Testnet`, `RPC_URL_Arc` | Optional. Your own RPC for the keeper |
-| `RPC_PROXY_BASE_URL`, `RPC_PROXY_TOKEN`, `RPC_PROXY_CHAINS` | Optional outside Arc Studio. Provisioned RPC proxy for the backend |
+| `RPC_PROXY_BASE_URL`, `RPC_PROXY_TOKEN`, `RPC_PROXY_CHAINS` | Optional. A provisioned RPC proxy for the backend, used when set |
 
 Never commit `.env`. Secrets stay on the backend and are never prefixed with `VITE_`.
 

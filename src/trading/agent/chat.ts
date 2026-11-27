@@ -359,7 +359,9 @@ function composeAction(s: Slots, ctx: ChatContext, price: (sym: string) => numbe
   const freq = frequency(w)
   const down = has(w, DOWN_WORDS)
   const up = has(w, UP_WORDS)
-  if (!buy && !sell && !protect && !trailing && !freq) return null
+  const dca = w.includes('dca')
+  const oco = w.includes('oco')
+  if (!buy && !sell && !protect && !trailing && !freq && !dca && !oco) return null
 
   // Management commands are left to the strict parser; this layer only reads trades.
   let tok = s.token
@@ -375,6 +377,16 @@ function composeAction(s: Slots, ctx: ChatContext, price: (sym: string) => numbe
     if (s.tokenAmount !== null) return fmtAmount(s.tokenAmount)
     if (s.pcts.length > 0 && !trailing && (s.prices.length > 0 || !(down || up))) return `${s.pcts[0]}%`
     return null
+  }
+
+  // "DCA $500 into ETH over the next 7 days": no schedule word, a total budget and a length. Read it as daily buys.
+  if (dca && !freq && s.usdc !== null && s.days !== null && s.days >= 1 && (w.includes('over') || w.includes('next') || w.includes('within'))) {
+    const days = Math.round(s.days)
+    const per = Math.floor((s.usdc * 100) / days) / 100
+    if (per > 0) return done(`dca ${per} ${q} into ${sym} daily for ${days} days`, `I took ${s.usdc} ${q} as the total budget, so each daily buy is ${per} ${q} (${(per * days).toFixed(2)} ${q} in all).`)
+  }
+  if (dca && !freq) {
+    return ask(`How often should it buy, and how much each time? For example: dca 5 ${q} into ${sym} daily for 7 days`, `dca 5 ${q} into ${sym} daily for 7 days`)
   }
 
   // DCA
@@ -398,8 +410,20 @@ function composeAction(s: Slots, ctx: ChatContext, price: (sym: string) => numbe
     prices = [down ? cur * (1 - s.pcts[0] / 100) : cur * (1 + s.pcts[0] / 100)].map((p) => Number(fmtPrice(p)))
   }
 
+  // An OCO with no levels: ask for them, and offer the usual ones when the price is known.
+  if (oco && prices.length < 2) {
+    if (cur === null) return ask(`An OCO needs two prices: a stop-loss below and a take-profit above. For example: oco all ${sym} sl 80000 tp 100000`, `oco all ${sym} sl 80000 tp 100000`)
+    const sl = fmtPrice(cur * 0.95)
+    const tp = fmtPrice(cur * 1.1)
+    return {
+      kind: 'reply',
+      text: `An OCO needs a stop-loss price below and a take-profit price above. ${sym} is at ${fmtPrice(cur)}, so a common pair is ${sl} and ${tp}. Tell me your own levels, or edit this one.`,
+      suggestions: [{ label: `OCO all ${sym}: ${sl} down, ${tp} up`, command: `oco ${sellAmount() ?? 'all'} ${sym} sl ${sl} tp ${tp}`, why: 'One escrow with a stop-loss below and a take-profit above.', mode: 'fill' }],
+    }
+  }
+
   // Sell side: stop-loss, take-profit, OCO, limit sell, market sell.
-  if (sell || protect) {
+  if (sell || protect || oco) {
     const amt = sellAmount() ?? (protect ? 'all' : null)
     if (prices.length >= 2) {
       const [lo, hi] = [Math.min(...prices.slice(0, 2)), Math.max(...prices.slice(0, 2))]

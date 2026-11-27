@@ -1,4 +1,4 @@
-import { ConnectKitButton } from 'connectkit'
+import { ConnectWalletButton } from '@/wallet/ConnectDialog'
 import type { NetworkConfig } from '@/trading/networks'
 import { useAccountSummary } from '@/trading/account'
 import { averagePrice18, formatPrice18, formatToken, pctDiff } from '@/trading/math'
@@ -24,13 +24,7 @@ export function Dashboard({ network }: { network: NetworkConfig }) {
         <Panel className="mx-auto max-w-xl p-10 text-center">
           <h1 className="text-3xl">Your dashboard</h1>
           <p className="mx-auto mt-2 max-w-sm text-sm text-mute">Connect a wallet to see your balances, escrowed funds, orders, plans and PnL on {network.label}.</p>
-          <ConnectKitButton.Custom>
-            {({ show }) => (
-              <button onClick={show} className="press mt-5 min-h-[48px] border border-line bg-accent px-6 text-sm font-bold text-accent-ink shadow-hard">
-                Connect wallet
-              </button>
-            )}
-          </ConnectKitButton.Custom>
+          <ConnectWalletButton className="mt-5 min-h-[48px] px-6 text-sm" />
         </Panel>
       </div>
     )

@@ -1,0 +1,13 @@
+{
+  "name": "Tactora",
+  "short_name": "Tactora",
+  "description": "An intelligent on-chain trading platform: advanced orders and natural-language AI agents on Arc.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080711",
+  "theme_color": "#080711",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

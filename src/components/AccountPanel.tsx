@@ -1,4 +1,4 @@
-import { ConnectKitButton } from 'connectkit'
+import { ConnectWalletButton } from '@/wallet/ConnectDialog'
 import { ExternalLink } from 'lucide-react'
 import type { NetworkConfig } from '@/trading/networks'
 import { useAccountSummary } from '@/trading/account'
@@ -27,13 +27,7 @@ export function AccountPanel({ network }: { network: NetworkConfig }) {
       {!a.connected ? (
         <div className="space-y-3 py-2 text-center">
           <p className="text-xs text-mute">Connect a wallet to see your balances and trade.</p>
-          <ConnectKitButton.Custom>
-            {({ show }) => (
-              <button onClick={show} className="press min-h-[44px] w-full border border-line bg-accent text-sm font-bold text-accent-ink shadow-hard-sm">
-                Connect wallet
-              </button>
-            )}
-          </ConnectKitButton.Custom>
+          <ConnectWalletButton className="min-h-[44px] w-full text-sm" />
         </div>
       ) : a.loading ? (
         <Skeleton className="h-24" />

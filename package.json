@@ -1,5 +1,5 @@
 {
-  "name": "studio-app",
+  "name": "tactora",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -17,13 +17,7 @@
     "contracts:test": "forge test"
   },
   "dependencies": {
-    "@circle-fin/adapter-viem-v2": "^1.19.2",
-    "@circle-fin/app-kit": "^1.18.0",
-    "@circle-fin/developer-controlled-wallets": "^10.8.1",
     "@circle-fin/modular-wallets-core": "^1.0.16",
-    "@circle-fin/smart-contract-platform": "^10.8.1",
-    "@circle-fin/user-controlled-wallets": "^10.8.1",
-    "@circle-fin/w3s-pw-web-sdk": "^1.1.11",
     "@openzeppelin/contracts": "5.6.1",
     "@tanstack/react-query": "^5.62.7",
     "@web3icons/react": "^4.0.0",
@@ -43,6 +37,8 @@
     "viem": "2.57.5"
   },
   "devDependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.8.1",
+    "@circle-fin/smart-contract-platform": "^10.8.1",
     "@types/bun": "^1.4.4",
     "@types/node": "^24.0.0",
     "@types/react": "^18.3.12",

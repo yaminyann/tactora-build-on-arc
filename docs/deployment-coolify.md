@@ -71,6 +71,7 @@ Compose healthchecks decide readiness: `api` answers `/health`, then `web` answe
 | `VITE_ORDERS_ADDRESS_ARC_TESTNET`, `VITE_ORDERS_DEPLOY_TX_ARC_TESTNET` | For testnet orders | Contract and deployment transaction |
 | `VITE_ORDERS_ADDRESS_ARC_MAINNET`, `VITE_ORDERS_DEPLOY_TX_ARC_MAINNET` | For mainnet orders | Set after you deploy on mainnet |
 | `VITE_SWAP_TARGETS_ARC` | No | Extra reviewed routers the browser may swap through on mainnet |
+| `VITE_CIRCLE_CLIENT_KEY`, `VITE_CIRCLE_CLIENT_URL`, `VITE_CIRCLE_SPONSOR_GAS` | No | Turns on the Circle passkey (fingerprint) wallet. Build-time and public. Set the Passkey Domain in the Circle Console to this site's host first; mainnet sponsoring needs a Gas Station policy. See [api-keys.md](api-keys.md) |
 | `KEEPER_ENABLED` | No (`true`) | Runs the keeper inside `api` |
 | `KEEPER_PRIVATE_KEY` | If keeper enabled | Dedicated low-balance wallet. Never the owner key |
 | `PLATFORM_FEE_BPS`, `PLATFORM_FEE_RECIPIENT` | No (`0`) | Swap fee (max 100 = 1%) and where it is paid |
@@ -82,6 +83,9 @@ Compose healthchecks decide readiness: `api` answers `/health`, then `web` answe
 | `TRUSTED_PROXY_HOPS` | No (`2`) | Proxies between the internet and `api`. Coolify's proxy + nginx = 2; add 1 behind Cloudflare |
 | `ALLOWED_ORIGINS` | Recommended | Your public origin. Stops other sites using your quote service |
 | `ALERT_WEBHOOK_URL` | No | Slack/Discord-style webhook for keeper and provider alerts |
+| `PLATFORM_ADMIN_ADDRESSES` | Recommended | Wallets that may sign in to the Platform dashboard (statistics, users, revenue, API keys). Comma-separated. See [platform-dashboard.md](platform-dashboard.md) |
+| `SECRETS_ENCRYPTION_KEY` | Recommended | 16+ random characters. Lets the dashboard save API keys, encrypted on the `api-data` volume. Runtime only. Keep a copy |
+| `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | No | Keys for the Agent chat model. The admin then picks the model (and an optional fallback) on the Platform page. Runtime only. The choice is saved in `/app/data/agent-llm.json` on the `api-data` volume. See [api-keys.md](api-keys.md) |
 
 Never put a secret in a `VITE_*` variable: those are public and end up in the JavaScript bundle.
 
@@ -92,7 +96,7 @@ Never put a secret in a `VITE_*` variable: those are public and end up in the Ja
 - **Rotate the keeper key**: fund the new wallet first, change `KEEPER_PRIVATE_KEY`, redeploy. Orders are unaffected: any wallet may execute them.
 - **Low keeper gas**: the Admin page shows the balance and warns under 1 USDC; `ALERT_WEBHOOK_URL` also alerts.
 - **Logs**: Coolify -> the service -> Logs. Secrets are redacted from log lines and alerts.
-- **Backups**: only the `api-data` volume matters (indexer database). It is rebuildable from the chain, so a lost volume costs time, not data.
+- **Backups**: only the `api-data` volume matters: the indexer database (rebuildable from the chain) and `agent-llm.json`, the admin's chat model choice (re-entering it takes a minute).
 - **Pause in an emergency**: Admin page -> Pause trading (needs the owner wallet). Refunds and cancels keep working.
 
 ## Troubleshooting
@@ -106,3 +110,6 @@ Never put a secret in a `VITE_*` variable: those are public and end up in the Ja
 | Admin tab missing | Connected wallet is not the owner | Connect the owner wallet |
 | "Owner history needs the indexer" | `INDEXER_ENABLED` is not `true` or still syncing | Enable it; check indexer lag |
 | Token list empty on mainnet | KyberSwap registry unreachable from the server | Check outbound HTTPS from the container |
+| Deploy log stops after "Adding build arguments to Docker Compose build command" and nothing happens for many minutes | The server is building the frontend and is starved (memory or disk), or cannot reach Docker Hub for a base image | On the Coolify host run `free -h`, `docker stats --no-stream`, `df -h /var/lib/docker`, `dmesg \| grep -i oom`. The build needs about 3 GB of RAM (add swap on a 2 GB host), and builds `api` and `web` in parallel. Stop the deployment, free memory, redeploy. For a small host, build the images in CI and have Coolify pull them |
+| Secrets appear as build arguments, or every deploy rebuilds from scratch | Coolify adds an `ARG` for every environment variable to each build stage | In the environment tab mark secrets (`ADMIN_TOKEN`, `SECRETS_ENCRYPTION_KEY`, `KEEPER_PRIVATE_KEY`, `ZEROEX_API_KEY`, `DATABASE_URL`, `AGENT_LLM_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`) as runtime only and keep only `VITE_*` values available at build time |
+| Browser shows "Request exceeds defined limit" or wallet sends fail intermittently | The public RPC rate-limits | Set `VITE_RPC_URL_ARC_TESTNET` / `VITE_RPC_URL_ARC` (rebuild `web`) and `RPC_URL_Arc_Testnet` / `RPC_URL_Arc` (`api`) to your own provider URLs |

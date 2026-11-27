@@ -69,6 +69,17 @@ Paste `ADMIN_TOKEN` and press Load. It is kept for this browser tab only and is 
 - **Quote providers**: each provider's circuit breaker. "Breaker open" means it has been failing and is skipped for a while.
 - **Indexer**: running or off and how many blocks it lags behind the chain.
 
+### Platform dashboard and chat model
+
+Everything about running the business (statistics, users, revenue, API keys, the chat model) moved to the **Platform** page, which is a separate role from the contract owner: see [platform-dashboard.md](platform-dashboard.md). The chat model section there works like this:
+
+1. Add at least one provider key, either in the server environment or by pasting it on the Platform page (needs `SECRETS_ENCRYPTION_KEY`). The page lists each provider and whether a key is present. It never shows a key. Where to get them: [api-keys.md](api-keys.md).
+2. Pick the **primary** provider and model. Low-cost and free presets are listed; for OpenRouter the list is the cheapest live models, free first. You can also type any model name.
+3. Optionally pick a **fallback**. It answers only when the primary errors, times out or is out of quota.
+4. Press **Test this model** to send one sample message and see whether it answers and how fast, switch **Chat model** on, then press **Save choice**.
+
+Switching it off returns the Agent to its free built-in rules, which keep working either way. The model never receives balances or addresses, and its output must pass the strict command parser; see [agent-station.md](agent-station.md).
+
 ## What an admin can and cannot do
 
 | Can | Cannot |

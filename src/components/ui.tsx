@@ -2,18 +2,18 @@ import { useEffect, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes,
 import { AlertTriangle, CheckCircle2, Info, Loader2, X } from 'lucide-react'
 import { clsx } from 'clsx'
 
-/** A bordered block. `raised` adds the hard shadow, for the one featured block on a screen. */
+/** A bordered block. `raised` adds a soft lift, for the one featured block on a screen. */
 export function Panel({ className, children, raised }: { className?: string; children: ReactNode; raised?: boolean }) {
-  return <section className={clsx('border border-line bg-panel', raised && 'shadow-hard', className)}>{children}</section>
+  return <section className={clsx('rounded-xl border border-line bg-panel', raised && 'shadow-hard', className)}>{children}</section>
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={clsx('animate-pulse bg-raised', className)} aria-hidden="true" />
+  return <div className={clsx('animate-pulse rounded-md bg-raised', className)} aria-hidden="true" />
 }
 
 type BtnVariant = 'primary' | 'ghost' | 'buy' | 'sell' | 'danger'
 
-/** Flat fill, 2px ink border, hard shadow that the button sinks into when pressed. */
+/** Flat fill, thin edge, settles a hair when pressed. */
 export function Button({
   variant = 'ghost',
   loading,
@@ -22,18 +22,18 @@ export function Button({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; loading?: boolean }) {
   const styles: Record<BtnVariant, string> = {
-    primary: 'bg-accent text-accent-ink',
-    ghost: 'bg-panel text-ink hover:bg-raised',
-    buy: 'bg-up text-canvas',
-    sell: 'bg-down text-canvas',
-    danger: 'bg-panel text-down hover:bg-raised',
+    primary: 'border-transparent bg-accent text-accent-ink hover:brightness-110',
+    ghost: 'border-control bg-panel text-ink hover:bg-raised',
+    buy: 'border-transparent bg-up text-canvas hover:brightness-110',
+    sell: 'border-transparent bg-down text-canvas hover:brightness-110',
+    danger: 'border-control bg-panel text-down hover:bg-raised',
   }
   return (
     <button
       {...rest}
       disabled={rest.disabled || loading}
       className={clsx(
-        'press inline-flex min-h-[44px] items-center justify-center gap-2 border border-line px-4 text-sm font-bold shadow-hard-sm disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none',
+        'press inline-flex min-h-[44px] items-center justify-center gap-2 rounded-lg border px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50',
         styles[variant],
         className,
       )}
@@ -44,7 +44,7 @@ export function Button({
   )
 }
 
-/** Tabs that read as one bordered strip. The active tab is the accent fill. */
+/** Tabs that read as one strip. The active tab is the accent fill. */
 export function Segmented<T extends string | number>({
   value,
   options,
@@ -59,7 +59,7 @@ export function Segmented<T extends string | number>({
   className?: string
 }) {
   return (
-    <div className={clsx('inline-flex border border-line bg-panel', className)} role="tablist">
+    <div className={clsx('inline-flex overflow-hidden rounded-lg border border-control bg-panel', className)} role="tablist">
       {options.map((o, i) => (
         <button
           key={String(o.id)}
@@ -68,7 +68,7 @@ export function Segmented<T extends string | number>({
           disabled={o.disabled}
           onClick={() => onChange(o.id)}
           className={clsx(
-            'min-h-[40px] flex-1 px-3 text-xs font-bold disabled:cursor-not-allowed disabled:opacity-40',
+            'min-h-[40px] flex-1 px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40',
             i > 0 && 'border-l border-line',
             o.id === value ? clsx('bg-accent text-accent-ink') : clsx('bg-panel hover:bg-raised', tone?.(o.id) ?? 'text-ink'),
           )}
@@ -94,7 +94,7 @@ export function Field({
         {hint && <span className="num text-mute">{hint}</span>}
       </span>
       {/* The wrapper draws the focus outline, so the bare input can hide its own. */}
-      <span className={clsx('flex items-center border bg-panel px-3 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-ink', error ? 'border-down' : 'border-line')}>
+      <span className={clsx('flex items-center rounded-lg border bg-panel px-3 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[rgb(var(--ring))]', error ? 'border-down' : 'border-control')}>
         <input {...input} inputMode="decimal" autoComplete="off" className="num min-h-[44px] w-full bg-transparent text-sm text-ink outline-none placeholder:text-mute" />
         {right && <span className="ml-2 shrink-0 text-xs font-semibold text-mute">{right}</span>}
       </span>
@@ -125,7 +125,7 @@ export function Notice({
   const Icon = tone === 'ok' ? CheckCircle2 : tone === 'info' ? Info : AlertTriangle
   const color = tone === 'ok' ? 'text-up' : tone === 'error' ? 'text-down' : tone === 'warn' ? 'text-warn' : 'text-ink'
   return (
-    <div className="flex gap-2.5 border border-line bg-raised p-3 text-xs">
+    <div className="flex gap-2.5 rounded-lg border border-line bg-raised p-3 text-xs">
       <Icon className={clsx('mt-0.5 h-4 w-4 shrink-0', color)} />
       <div className="min-w-0">
         {title && <div className="mb-0.5 font-bold">{title}</div>}
@@ -135,7 +135,7 @@ export function Notice({
   )
 }
 
-/** A square status tag. Use it only for a real state or label. */
+/** A small status tag. Use it only for a real state or label. */
 export function Badge({ children, tone = 'mute' }: { children: ReactNode; tone?: 'up' | 'down' | 'warn' | 'mute' | 'accent' }) {
   const tones = {
     up: 'bg-up text-canvas',
@@ -144,7 +144,7 @@ export function Badge({ children, tone = 'mute' }: { children: ReactNode; tone?:
     mute: 'bg-raised text-ink',
     accent: 'bg-accent text-accent-ink',
   }
-  return <span className={clsx('inline-flex items-center border border-line px-1.5 py-0.5 font-mono text-[11px] font-semibold', tones[tone])}>{children}</span>
+  return <span className={clsx('inline-flex items-center rounded-md border border-transparent px-1.5 py-0.5 font-mono text-[11px] font-semibold', tones[tone])}>{children}</span>
 }
 
 /** On/off switch with a label and optional hint. */
@@ -157,8 +157,8 @@ export function Switch({ checked, onChange, label, hint }: { checked: boolean; o
       </span>
       <span className="flex shrink-0 items-center gap-2">
         <span className="num w-7 text-right text-[11px] font-semibold text-mute">{checked ? 'On' : 'Off'}</span>
-        <span className={clsx('relative h-6 w-11 border border-line', checked ? 'bg-accent' : 'bg-panel')}>
-          <span className={clsx('absolute top-0.5 h-4 w-4 border border-line bg-ink transition-all', checked ? 'left-[1.45rem]' : 'left-0.5')} />
+        <span className={clsx('relative h-6 w-11 rounded-full border', checked ? 'border-transparent bg-accent' : 'border-control bg-raised')}>
+          <span className={clsx('absolute top-[3px] h-4 w-4 rounded-full transition-all', checked ? 'left-[1.5rem] bg-accent-ink' : 'left-[3px] bg-mute')} />
         </span>
       </span>
     </button>
@@ -189,11 +189,11 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
         aria-modal="true"
         aria-label={title}
         onMouseDown={(e) => e.stopPropagation()}
-        className={clsx('max-h-[92dvh] w-full overflow-y-auto border border-line bg-panel p-5 shadow-hard-lg', wide ? 'max-w-xl' : 'max-w-md')}
+        className={clsx('max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border border-line bg-panel p-5 shadow-hard-lg sm:rounded-2xl', wide ? 'max-w-xl' : 'max-w-md')}
       >
         <div className="mb-4 flex items-center justify-between gap-3">
           <h2 className="text-lg">{title}</h2>
-          <button aria-label="Close" onClick={onClose} className="press grid h-11 w-11 place-items-center border border-line bg-panel shadow-hard-sm hover:bg-raised">
+          <button aria-label="Close" onClick={onClose} className="press grid h-11 w-11 place-items-center rounded-lg border border-control bg-panel hover:bg-raised">
             <X className="h-4 w-4" />
           </button>
         </div>

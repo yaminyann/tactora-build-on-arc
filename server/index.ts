@@ -3,9 +3,12 @@
  *  - GET /health   provider status. Public view is redacted; operators (see ADMIN_TOKEN) get full detail
  *  - GET /metrics  counters for operators only
  *  - GET /tokens   tradable token list for a chain (KyberSwap registry, filtered and cached)
+ *  - GET /market/token, /market/candles   price, pool and chart data for any listed token (DexScreener and GeckoTerminal, free, cached)
  *  - GET /price    indicative 0x price (no transaction data), cached briefly and coalesced
  *  - GET /quote    firm 0x quote including the transaction to sign (never cached)
- *  - POST /agent-chat  optional language-model help for the Agent chat (off unless AGENT_LLM_URL is set)
+ *  - POST /agent-chat  optional language-model help for the Agent chat (off until an admin chooses a provider)
+ *  - GET/PUT /admin/agent-llm, POST /admin/agent-llm/test, GET /admin/agent-llm/models   admin choice of chat model and fallback (operator only)
+ *  - /admin/auth/*   wallet sign-in for platform admins (PLATFORM_ADMIN_ADDRESSES); /admin/session, /admin/platform/stats, /admin/secrets  platform dashboard (admin only)
  * Run with `bun run server`. The Vite dev server proxies /api to this process.
  *
  * Trust and abuse controls (env, all optional):
@@ -15,7 +18,9 @@
  *   ADMIN_TOKEN         bearer token for /metrics and detailed /health. Unset: loopback-only, direct
  *   UPSTREAM_BUDGET_PER_MIN  global cap on calls to 0x from this process (default 600)
  *   PLATFORM_FEE_BPS / PLATFORM_FEE_RECIPIENT  fee on browser market swaps, paid by the aggregator (max 100 bps)
- *   AGENT_LLM_URL / AGENT_LLM_MODEL / AGENT_LLM_API_KEY / AGENT_LLM_DAILY_CALLS  optional chat model, see agent-chat.ts
+ *   PLATFORM_ADMIN_ADDRESSES  comma-separated wallets that may sign in to the platform dashboard
+ *   SECRETS_ENCRYPTION_KEY  turns on saving API keys from the dashboard (stored encrypted in DATA_DIR/secrets.json)
+ *   OPENROUTER_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / AGENT_LLM_URL / AGENT_LLM_DAILY_CALLS  chat model keys, see agent-llm.ts
  */
 import { isApiError, parseQuoteRequest, ZEROEX_SUPPORTED_CHAINS } from './zerox'
 import { gateway, readAllowance } from './gateway/instance'
@@ -26,13 +31,21 @@ import { keeperStatus, startKeeper } from './keeper'
 import { listProviders } from './automation/providers'
 import { metrics, RateLimiter, TtlCache } from './scale'
 import { isOperator, originAllowed, parseList, resolveClientIp } from './security'
+import { AdminSessions, bearerToken, parseAdminAddresses } from './admin-auth'
+import { SecretStore, isSecretName, validSecretValue } from './secrets'
+import { computePlatformStats } from './platform-stats'
+import { erc20Abi, type Address } from 'viem'
+import { getUsdc } from '../src/onchain-facts'
+import { publicClientFor } from './rpc'
 import { indexerDb, indexerStatus, startIndexer } from './indexer/runtime'
-import { adminEventsFor, clampLimit, eventCounts, historyFor, swapCount, swapsFor, validOwner } from './indexer/queries'
+import { adminEventsFor, clampLimit, eventCounts, historyFor, platformRows, swapCount, swapsFor, validOwner } from './indexer/queries'
 import { recordSwap } from './indexer/swaps'
 import { swapTargetsFor } from './gateway/targets'
 import { createTokenList } from './gateway/tokens'
+import { DexData, TIMEFRAME_IDS, type Timeframe } from './market/dex'
 import { parsePlatformFee } from './gateway/fee'
-import { askModel, DailyBudget, loadAgentChatConfig, parseAgentChatInput } from './agent-chat'
+import { DailyBudget, parseAgentChatInput } from './agent-chat'
+import { LlmConfigStore, PROVIDERS, UsageTracker, pickCheapModels, providerOverview, runChain, sanitizeLlmConfig, type ProviderId } from './agent-llm'
 
 const port = Number(process.env.API_PORT ?? 3001)
 const PRICE_TTL_MS = Number(process.env.PRICE_CACHE_TTL_MS ?? 4000)
@@ -48,12 +61,27 @@ const limits = {
   other: new RateLimiter(Math.round(240 * scale), 60_000),
   swaps: new RateLimiter(Math.round(30 * scale), 60_000),
   chat: new RateLimiter(Math.round(12 * scale), 60_000),
+  login: new RateLimiter(Math.max(5, Math.round(15 * scale)), 60_000),
 }
 
-const chatCfg = loadAgentChatConfig()
-const chatBudget = chatCfg ? new DailyBudget(chatCfg.dailyCalls) : null
+// Which chat model is used is the admin's choice, kept in the data directory. Keys come from the environment.
+const llmStore = new LlmConfigStore(`${process.env.DATA_DIR ?? './data'}/agent-llm.json`)
+const llmUsage = new UsageTracker()
+const chatBudget = new DailyBudget(Math.max(1, Math.floor(Number(process.env.AGENT_LLM_DAILY_CALLS ?? 2000)) || 2000))
+let openRouterModels: { at: number; models: ReturnType<typeof pickCheapModels> } | null = null
+
+// Platform admins sign in with their wallet. ADMIN_TOKEN stays as the break-glass key.
+const adminList = parseAdminAddresses(process.env.PLATFORM_ADMIN_ADDRESSES)
+for (const p of adminList.problems) console.warn(`[api] ${p}`)
+const sessions = new AdminSessions(adminList.addresses)
+console.log(`[api] platform admins: ${adminList.addresses.length}`)
+// Keys saved from the dashboard (encrypted). A saved key is copied into process.env, so existing code picks it up.
+const secretStore = new SecretStore(`${process.env.DATA_DIR ?? './data'}/secrets.json`, process.env.SECRETS_ENCRYPTION_KEY || undefined)
+if (secretStore.problem) console.warn(`[api] ${secretStore.problem}`)
+let statsCache: { key: string; at: number; body: unknown } | null = null
 
 const tokenList = createTokenList()
+const dexData = new DexData({ geckoPerMinute: Math.max(1, Math.floor(Number(process.env.GECKO_CALLS_PER_MIN ?? 24)) || 24) })
 const platform = parsePlatformFee()
 if (platform.problem) console.warn(`[api] ${platform.problem}`)
 if (platform.fee) console.log(`[api] platform fee ${platform.fee.bps} bps to ${platform.fee.recipient} on browser market swaps`)
@@ -78,10 +106,14 @@ const server = Bun.serve({
     const url = new URL(req.url)
     const isSwapReport = req.method === 'POST' && url.pathname === '/swaps'
     const isChat = req.method === 'POST' && url.pathname === '/agent-chat'
-    if (req.method !== 'GET' && !isSwapReport && !isChat) return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'GET only (POST /swaps reports a confirmed swap, POST /agent-chat asks the optional chat model)' } }, 405)
+    const isLlmAdmin = url.pathname.startsWith('/admin/agent-llm')
+    const isAdminPath = url.pathname.startsWith('/admin/')
+    if (req.method !== 'GET' && !isSwapReport && !isChat && !(isAdminPath && (req.method === 'PUT' || req.method === 'POST' || req.method === 'DELETE'))) {
+      return json({ error: { code: 'METHOD_NOT_ALLOWED', message: 'GET only (POST /swaps reports a confirmed swap, POST /agent-chat asks the optional chat model)' } }, 405)
+    }
 
     const socketIp = srv.requestIP(req)?.address
-    const bucket = url.pathname === '/price' ? 'price' : url.pathname === '/quote' ? 'quote' : isSwapReport ? 'swaps' : isChat ? 'chat' : 'other'
+    const bucket = url.pathname === '/price' ? 'price' : url.pathname === '/quote' ? 'quote' : isSwapReport ? 'swaps' : isChat ? 'chat' : url.pathname.startsWith('/admin/auth/') ? 'login' : 'other'
     const key = resolveClientIp(req.headers.get('x-forwarded-for'), socketIp, trustedHops)
     if (!limits[bucket].allow(key)) {
       metrics.http.rateLimited += 1
@@ -90,7 +122,9 @@ const server = Bun.serve({
       })
     }
 
-    const operator = isOperator(req.headers, socketIp, adminToken)
+    // Operator = the ADMIN_TOKEN bearer, or a platform admin's wallet session. Both see detailed status and use admin routes.
+    const session = sessions.verify(bearerToken(req.headers.get('authorization')))
+    const operator = isOperator(req.headers, socketIp, adminToken) || session !== null
 
     if (url.pathname === '/health') {
       const keeper = keeperStatus()
@@ -105,7 +139,7 @@ const server = Bun.serve({
         keeper: view,
         indexer: operator ? indexerStatus() : { ...indexerStatus(), lastError: indexerStatus().lastError ? 'Indexer reported an error. Details are restricted to operators.' : null },
         automationProviders: listProviders(),
-        agentChat: { enabled: Boolean(chatCfg) },
+        agentChat: { enabled: llmStore.get().enabled, mode: llmStore.get().fallback ? 'fallback' : 'single' },
         platformFee: platform.fee ? { bps: platform.fee.bps, ...(operator ? { recipient: platform.fee.recipient } : {}) } : null,
         ...(operator && platform.problem ? { platformFeeProblem: platform.problem } : {}),
       })
@@ -130,7 +164,7 @@ const server = Bun.serve({
       if (!originAllowed(req.headers.get('origin'), req.headers.get('referer'), allowedOrigins)) {
         return json({ error: { code: 'ORIGIN_NOT_ALLOWED', message: 'This origin may not use the chat service.' } }, 403)
       }
-      if (!chatCfg || !chatBudget) return json({ error: { code: 'AGENT_CHAT_DISABLED', message: 'The optional chat model is not switched on for this backend.' } }, 503)
+      if (!llmStore.get().enabled) return json({ error: { code: 'AGENT_CHAT_DISABLED', message: 'The optional chat model is not switched on for this backend.' } }, 503)
       if (Number(req.headers.get('content-length') ?? 0) > 4000) return json({ error: { code: 'INPUT_INVALID', message: 'Message too large.' } }, 413)
       let body: unknown
       try {
@@ -143,12 +177,166 @@ const server = Bun.serve({
       const input = parseAgentChatInput(body)
       if (!input) return json({ error: { code: 'INPUT_INVALID', message: 'A message of 1 to 300 characters and a short token list are required.' } }, 400)
       if (!chatBudget.take()) return json({ error: { code: 'AGENT_CHAT_BUDGET', message: 'The chat model has reached its daily limit. The built-in rules still work.' } }, 429)
-      try {
-        const out = await askModel(chatCfg, input)
-        return json(out ?? { reply: '', command: null })
-      } catch {
+      const chain = await runChain(llmStore.get(), input, { usage: llmUsage })
+      if (!chain.out) {
         metrics.http.upstreamErrors += 1
         return json({ error: { code: 'AGENT_CHAT_UNAVAILABLE', message: 'The chat model did not answer. The built-in rules still work.' } }, 502)
+      }
+      return json({ reply: chain.out.reply, command: chain.out.command, via: chain.attempts.length > 1 ? 'fallback' : 'primary' })
+    }
+
+    if (url.pathname === '/admin/auth/status') {
+      const a = url.searchParams.get('address')
+      return json({ configured: sessions.configured, admin: validOwner(a) && sessions.isAdmin(a) })
+    }
+    if (url.pathname === '/admin/auth/challenge') {
+      const a = url.searchParams.get('address')
+      if (!validOwner(a)) return json({ error: { code: 'INPUT_INVALID', message: 'A wallet address is required.' } }, 400)
+      const c = sessions.challenge(a)
+      if (!c.ok) return json({ error: { code: c.code, message: c.message } }, 403)
+      return json({ message: c.message, nonce: c.nonce })
+    }
+    if (url.pathname === '/admin/auth/login' && req.method === 'POST') {
+      let body: { address?: unknown; nonce?: unknown; signature?: unknown } = {}
+      try {
+        body = (await req.json()) as typeof body
+      } catch {
+        return json({ error: { code: 'INPUT_INVALID', message: 'Body must be JSON.' } }, 400)
+      }
+      if (typeof body.address !== 'string' || typeof body.nonce !== 'string' || typeof body.signature !== 'string') return json({ error: { code: 'INPUT_INVALID', message: 'address, nonce and signature are required.' } }, 400)
+      const r = await sessions.login(body.address, body.nonce, body.signature)
+      if (!r.ok) return json({ error: { code: r.code, message: r.message } }, r.code === 'NOT_ADMIN' ? 403 : 401)
+      return json({ token: r.token, address: r.address, expiresAt: r.expiresAt })
+    }
+    if (url.pathname === '/admin/auth/logout' && req.method === 'POST') {
+      sessions.logout(bearerToken(req.headers.get('authorization')))
+      return json({ ok: true })
+    }
+    if (isAdminPath && !isLlmAdmin) {
+      if (!operator) return json({ error: { code: 'FORBIDDEN', message: 'Admin access required.' } }, 403)
+      if (url.pathname === '/admin/session') return json({ kind: session ? 'wallet' : 'token', address: session?.address ?? null, expiresAt: session?.expiresAt ?? null })
+
+      if (url.pathname === '/admin/platform/stats') {
+        const idx = indexerDb()
+        if (!idx) return json({ error: { code: 'INDEXER_DISABLED', message: 'Statistics come from the indexer. Set INDEXER_ENABLED=true and point INDEXER_NETWORK at the chain to measure.' } }, 503)
+        const days = Math.min(90, Math.max(7, Math.floor(Number(url.searchParams.get('days'))) || 30))
+        const topUsers = Math.min(1000, Math.max(10, Math.floor(Number(url.searchParams.get('users'))) || 100))
+        const cacheKey = `${days}:${topUsers}`
+        if (statsCache && statsCache.key === cacheKey && Date.now() - statsCache.at < 20_000) return json(statsCache.body)
+        const usdc = getUsdc(idx.chainId)?.address
+        if (!usdc) return json({ error: { code: 'NO_USDC', message: 'No USDC is known for the indexed chain.' } }, 500)
+        const rows = await platformRows(idx.db, idx.chainId)
+        const nowSec = Math.floor(Date.now() / 1000)
+        const stats = computePlatformStats(rows.events, rows.swaps, { usdc, feeBps: platform.fee?.bps ?? null, nowSec, days, topUsers })
+        const recipient = platform.fee?.recipient ?? null
+        let balanceUnits: string | null = null
+        if (recipient) {
+          try {
+            balanceUnits = (await publicClientFor(idx.chainId).readContract({ address: usdc as Address, abi: erc20Abi, functionName: 'balanceOf', args: [recipient as Address] })).toString()
+          } catch {
+            balanceUnits = null
+          }
+        }
+        const body = {
+          chainId: idx.chainId,
+          generatedAt: nowSec,
+          stats,
+          fee: { bps: platform.fee?.bps ?? null, recipient, problem: platform.problem ?? null, balanceUnits },
+          indexer: indexerStatus(),
+        }
+        statsCache = { key: cacheKey, at: Date.now(), body }
+        return json(body)
+      }
+
+      if (url.pathname === '/admin/secrets' && req.method === 'GET') return json(secretStore.status())
+      if (url.pathname.startsWith('/admin/secrets/')) {
+        const name = decodeURIComponent(url.pathname.slice('/admin/secrets/'.length))
+        if (!isSecretName(name)) return json({ error: { code: 'NOT_FOUND', message: 'Unknown key name.' } }, 404)
+        if (!secretStore.enabled) return json({ error: { code: 'SECRETS_DISABLED', message: 'Set SECRETS_ENCRYPTION_KEY (at least 16 characters) on the server to save keys from the dashboard.' } }, 409)
+        if (req.method === 'PUT') {
+          let body: { value?: unknown } = {}
+          try {
+            body = (await req.json()) as typeof body
+          } catch {
+            return json({ error: { code: 'INPUT_INVALID', message: 'Body must be JSON.' } }, 400)
+          }
+          if (!validSecretValue(body.value)) return json({ error: { code: 'INPUT_INVALID', message: 'A key is 8 to 512 characters with no spaces.' } }, 400)
+          secretStore.set(name, body.value)
+          return json(secretStore.status())
+        }
+        if (req.method === 'DELETE') {
+          secretStore.remove(name)
+          return json(secretStore.status())
+        }
+      }
+      return json({ error: { code: 'NOT_FOUND', message: 'Unknown route' } }, 404)
+    }
+
+    if (isLlmAdmin) {
+      if (!operator) return json({ error: { code: 'FORBIDDEN', message: 'Operator access required.' } }, 403)
+      if (url.pathname === '/admin/agent-llm' && req.method === 'GET') {
+        return json({ config: llmStore.get(), providers: providerOverview(), usage: llmUsage.snapshot(), dailyBudgetLeft: chatBudget.remaining })
+      }
+      if (url.pathname === '/admin/agent-llm' && req.method === 'PUT') {
+        let body: unknown
+        try {
+          body = await req.json()
+        } catch {
+          return json({ error: { code: 'INPUT_INVALID', message: 'Body must be JSON.' } }, 400)
+        }
+        const next = sanitizeLlmConfig(body)
+        const asked = (body as { enabled?: unknown })?.enabled === true
+        if (asked && !next.enabled) return json({ error: { code: 'INPUT_INVALID', message: 'Choose a valid provider and model for the first slot before switching the chat model on.' } }, 400)
+        return json({ config: llmStore.set(next) })
+      }
+      if (url.pathname === '/admin/agent-llm/test' && req.method === 'POST') {
+        let body: { provider?: unknown; model?: unknown } = {}
+        try {
+          body = (await req.json()) as typeof body
+        } catch {
+          return json({ error: { code: 'INPUT_INVALID', message: 'Body must be JSON.' } }, 400)
+        }
+        const one = sanitizeLlmConfig({ enabled: true, primary: { provider: body.provider, model: body.model } })
+        if (!one.primary) return json({ error: { code: 'INPUT_INVALID', message: 'Unknown provider or invalid model name.' } }, 400)
+        const probe = await runChain(one, { text: 'buy 5 dollars of bitcoin', tokens: ['tBTC', 'tETH'], quote: 'USDC' }, { timeoutMs: 15_000 })
+        const a = probe.attempts[0]
+        return json({ ok: Boolean(probe.out), ms: a?.ms ?? 0, error: probe.out ? null : (a?.error ?? 'no answer'), command: probe.out?.command ?? null })
+      }
+      if (url.pathname === '/admin/agent-llm/models' && req.method === 'GET') {
+        const provider = url.searchParams.get('provider') as ProviderId | null
+        if (provider !== 'openrouter') return json({ models: PROVIDERS.find((p) => p.id === provider)?.presets.map((p) => ({ id: p.model, name: p.label, perMillion: 0, free: false })) ?? [] })
+        if (!openRouterModels || Date.now() - openRouterModels.at > 3_600_000) {
+          try {
+            const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(10_000) })
+            if (!res.ok) throw new Error('model list unavailable')
+            openRouterModels = { at: Date.now(), models: pickCheapModels(await res.json()) }
+          } catch {
+            if (!openRouterModels) return json({ error: { code: 'MODEL_LIST_UNAVAILABLE', message: 'OpenRouter did not answer. Type a model name instead.' } }, 502)
+          }
+        }
+        return json({ models: openRouterModels.models })
+      }
+      return json({ error: { code: 'NOT_FOUND', message: 'Unknown route' } }, 404)
+    }
+
+    if (url.pathname === '/market/token' || url.pathname === '/market/candles') {
+      const chainId = Number(url.searchParams.get('chainId'))
+      const token = url.searchParams.get('token') ?? ''
+      if (!Number.isInteger(chainId) || !/^0x[0-9a-fA-F]{40}$/.test(token)) return json({ error: { code: 'INPUT_INVALID', message: 'chainId and a token address are required' } }, 400)
+      if (!dexData.supports(chainId)) return json({ market: null, reason: 'unsupported_chain' })
+      try {
+        if (url.pathname === '/market/token') {
+          const pool = await dexData.pool(chainId, token)
+          return json({ market: pool }, 200, { 'cache-control': 'public, max-age=15' })
+        }
+        const tf = url.searchParams.get('tf') ?? '1h'
+        if (!TIMEFRAME_IDS.includes(tf as Timeframe)) return json({ error: { code: 'INPUT_INVALID', message: `tf must be one of ${TIMEFRAME_IDS.join(', ')}` } }, 400)
+        const out = await dexData.candles(chainId, token, tf as Timeframe)
+        if (!out) return json({ market: null, candles: [], reason: 'no_pool' })
+        return json({ market: out.pool, candles: out.candles, stale: out.stale, source: 'geckoterminal' }, 200, { 'cache-control': 'public, max-age=10' })
+      } catch {
+        metrics.http.upstreamErrors += 1
+        return json({ error: { code: 'MARKET_DATA_UNAVAILABLE', message: 'Chart data is temporarily unavailable.' } }, 502)
       }
     }
 

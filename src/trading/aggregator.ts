@@ -3,7 +3,7 @@
  * Add another provider by implementing this interface and registering it in `getAggregator`.
  * No adapter ever fabricates a quote: unavailable means unavailable.
  */
-import { createPublicClient, encodeFunctionData, erc20Abi, http, type Address, type Hex } from 'viem'
+import { createPublicClient, decodeFunctionData, encodeFunctionData, erc20Abi, http, parseAbi, type Address, type Hex } from 'viem'
 import { getChain } from '@/onchain-facts'
 import type { NetworkConfig } from './networks'
 
@@ -96,6 +96,63 @@ export function assertSafeSwapQuote(allowedTargets: readonly Address[], quote: S
   }
 }
 
+/** KyberSwap MetaAggregationRouterV2 entry point, checked against a live quote (selector 0xe21fd0e9). */
+const kyberAbi = parseAbi([
+  'function swap((address callTarget,address approveTarget,bytes targetData,(address srcToken,address dstToken,address[] srcReceivers,uint256[] srcAmounts,address[] feeReceivers,uint256[] feeAmounts,address dstReceiver,uint256 amount,uint256 minReturnAmount,uint256 flags,bytes permit) desc,bytes clientData) execution) payable returns (uint256 returnAmount, uint256 gasUsed)',
+])
+/** 0x AllowanceHolder entry point. The settler payload inside `data` is not decoded. */
+const zeroExAbi = parseAbi(['function exec(address operator, address token, uint256 amount, address target, bytes data) payable returns (bytes)'])
+
+const KYBER_ROUTER_ADDRESS = '0x6131B5fae19EA4f9D964eAc0408E4408b66337b5'
+const ZEROEX_ALLOWANCE_HOLDER_ADDRESS = '0x0000000000001fF3684f28c67538d4D072C22734'
+
+/**
+ * The calldata comes from our backend over the network, so it is not trusted either. Pinning the target is not
+ * enough: calldata to the right router can still pay the output to someone else or accept almost nothing back.
+ * Public Arc RPCs do not support transaction simulation, so the calldata itself is read and checked against the
+ * request the user made. Anything that is not recognised on a known router is refused (fail closed).
+ *
+ *  - KyberSwap swap(): token in and out, the receiver (must be the taker), the amount, and a minimum return that
+ *    is no looser than the user's slippage allows, are all verified.
+ *  - 0x exec(): the token and amount that move are verified. The receiver lives inside the settler payload, which
+ *    is not decoded here, so for 0x this is a partial check.
+ *  - The testnet router builds its own calldata in the browser and is not passed through here.
+ */
+export function assertSwapMatchesRequest(req: SwapQuoteRequest, quote: SwapQuote): void {
+  const tx = quote.transaction
+  if (!tx) return
+  const to = tx.to.toLowerCase()
+  const refuse = (why: string): never => {
+    throw new AggregatorError('CALLDATA_MISMATCH', `Refusing this swap: ${why}. Nothing was sent.`)
+  }
+  if (to === KYBER_ROUTER_ADDRESS.toLowerCase()) {
+    let desc
+    try {
+      desc = decodeFunctionData({ abi: kyberAbi, data: tx.data }).args[0].desc
+    } catch {
+      return refuse('the swap calldata is not a recognised KyberSwap swap')
+    }
+    if (desc.srcToken.toLowerCase() !== req.sellToken.toLowerCase() || desc.dstToken.toLowerCase() !== req.buyToken.toLowerCase()) return refuse('it swaps different tokens than you asked for')
+    if (desc.dstReceiver.toLowerCase() !== req.taker.toLowerCase()) return refuse('it would send the output to a different address')
+    const fees = desc.feeAmounts.reduce((a, b) => a + b, 0n)
+    if (desc.amount !== req.sellAmount && desc.amount + fees !== req.sellAmount) return refuse('it sells a different amount than you entered')
+    // The quote's own minimum is the floor. Allow the user's slippage plus a little rounding, never more.
+    const floor = (quote.buyAmount * BigInt(10_000 - req.slippageBps - 50)) / 10_000n
+    if (desc.minReturnAmount < floor) return refuse('its minimum output is far below what you accepted')
+    return
+  }
+  if (to === ZEROEX_ALLOWANCE_HOLDER_ADDRESS.toLowerCase()) {
+    let args
+    try {
+      args = decodeFunctionData({ abi: zeroExAbi, data: tx.data }).args
+    } catch {
+      return refuse('the swap calldata is not a recognised 0x swap')
+    }
+    if (args[1].toLowerCase() !== req.sellToken.toLowerCase()) return refuse('it moves a different token than you asked for')
+    if (args[2] !== req.sellAmount) return refuse('it moves a different amount than you entered')
+  }
+}
+
 export function parseRawQuote(raw: RawQuote): SwapQuote | null {
   if (!raw.liquidityAvailable || !raw.buyAmount || !raw.minBuyAmount || !raw.sellAmount) return null
   return {
@@ -152,7 +209,10 @@ export class ZeroExAdapter implements AggregatorAdapter {
       throw new AggregatorError(raw.error?.code ?? 'UPSTREAM_ERROR', raw.error?.message ?? `Quote request failed (${res.status})`)
     }
     const parsed = parseRawQuote(raw)
-    if (parsed) assertSafeSwapQuote(this.network.swapTargets, parsed)
+    if (parsed) {
+      assertSafeSwapQuote(this.network.swapTargets, parsed)
+      assertSwapMatchesRequest(req, parsed)
+    }
     return parsed
   }
 
@@ -197,6 +257,11 @@ export class TestRouterAdapter implements AggregatorAdapter {
       return null
     }
     if (buyAmount === 0n) return null
+    // The router pays USDC from its own balance. If it cannot cover this trade the swap would revert, so there is no route.
+    if (req.buyToken.toLowerCase() === this.network.quote.address.toLowerCase()) {
+      const have = await client.readContract({ address: req.buyToken, abi: erc20Abi, functionName: 'balanceOf', args: [router] }).catch(() => null)
+      if (have !== null && have < buyAmount) return null
+    }
     const allowance = await client.readContract({ address: req.sellToken, abi: erc20Abi, functionName: 'allowance', args: [req.taker, router] })
     return {
       buyAmount,

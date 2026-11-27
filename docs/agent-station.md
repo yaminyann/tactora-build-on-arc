@@ -6,7 +6,7 @@ You can **chat in plain words** ("sell half my bitcoin if it falls to 80k") or t
 
 1. **Strict grammar** (`parser.ts`). Typed commands are read exactly. A common token name is mapped to the listed symbol ("bitcoin" to tBTC).
 2. **Built-in chat rules** (`chat.ts`, runs in your browser, no network, no model, no cost). Plain wording is rewritten into a command and shown ("I read that as: stop loss 50% tBTC at 80000"). The rules also answer questions about order types, and suggest setups from what you hold. When a detail is missing (amount, price, duration) they ask for it instead of guessing.
-3. **Optional language model** (`server/agent-chat.ts`, off by default). Only if the operator sets `AGENT_LLM_URL` and `AGENT_LLM_MODEL`, wording the rules could not read is sent to an OpenAI-compatible endpoint, for example a local Ollama server (free) or a free-tier hosted model. See below.
+3. **Optional language model** (`server/agent-llm.ts`, `server/agent-chat.ts`, off by default). Only when the admin switches it on, wording the rules could not read is sent to an OpenAI-compatible endpoint: OpenRouter, Google Gemini, OpenAI or your own server. The admin picks a primary model and an optional fallback on the Platform page. See below.
 
 Whichever route produced it, the result is the same: one command, a plan built from live data, a readback with exact numbers, your yes, and a wallet signature. Nothing in this chain can skip those steps.
 
@@ -41,14 +41,18 @@ Examples the built-in rules understand:
 
 ## Optional language model
 
-Off unless the operator sets these on the backend (see [configuration.md](configuration.md)):
+Off until the admin switches it on in **Platform > Agent chat model** (platform admin wallet, or `ADMIN_TOKEN`). Keys live only in the backend environment; [api-keys.md](api-keys.md) says where to get each one.
 
-| Variable | Meaning |
+| Setting | Meaning |
 | --- | --- |
-| `AGENT_LLM_URL` | Base URL of an OpenAI-compatible API, for example `http://localhost:11434/v1` (Ollama, no fee), or the `/v1` URL of a free-tier provider |
-| `AGENT_LLM_MODEL` | Model name, for example a small 3B to 8B instruct model |
-| `AGENT_LLM_API_KEY` | Only if the endpoint needs one. Stays on the server |
-| `AGENT_LLM_DAILY_CALLS` | Global cap per UTC day (default 2000), so a free tier is never exhausted |
+| Primary model | Provider (OpenRouter, Google Gemini, OpenAI or Custom) and model. The picker offers low-cost presets; for OpenRouter it also lists the cheapest live models, free ones first |
+| Fallback model (optional) | Used only when the primary errors, times out or is out of quota |
+| Test button | Sends one fixed sample message through a provider and model and shows whether it answered, how fast, and the command it produced |
+| `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | Backend environment. A provider with no key cannot be chosen |
+| `AGENT_LLM_URL`, `AGENT_LLM_MODEL`, `AGENT_LLM_API_KEY` | The "Custom" provider: any OpenAI-compatible server, for example a local Ollama (no fee). If the admin has saved nothing, this pair alone still switches the model on, as before |
+| `AGENT_LLM_DAILY_CALLS` | Global cap per UTC day (default 2000) across both models, so a free tier is never exhausted |
+
+The admin's choice is saved in `DATA_DIR/agent-llm.json`, which never contains keys, and survives restarts.
 
 What it is allowed to do:
 
@@ -84,7 +88,7 @@ The first action asks for a one-time permission (inline in the chat, or from the
 - **Before each command runs**:
   - *Ask "is this exact?"* (default): every command is read back and waits for your yes.
   - *Run inside limits*: a command that fits the limits runs right after the readback. A command over the limits, or one whose size cannot be priced, still waits for your yes.
-- **Limits**: largest single command and largest total per day, in USDC.
+- **Limits**: largest single command and largest total per day, in USDC. They apply to buying and spending. A protective sell order (stop-loss, take-profit, stop-limit, trailing stop, OCO) only escrows tokens you already hold and can be cancelled at any time, so it is exempt from both limits, but it always waits for your yes, even in "run inside limits" mode. Scopes and expiry still apply.
 - **Scopes**: market swaps, orders (limit, stops, trailing, OCO), DCA, and cancel/pause/resume. Each can be switched off.
 
 After that, commands inside the permission do not ask for permission again. The panel shows what is granted, until when, and how much of today's limit is used. **Revoke** ends it at once. The permission and the daily total are stored in this browser only.

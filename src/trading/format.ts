@@ -37,5 +37,6 @@ export function fmtDuration(seconds: number): string {
 export function priceFmt(n: number): string {
   if (n >= 1000) return fmtNum(n, 2)
   if (n >= 1) return fmtNum(n, 4)
-  return fmtNum(n, 6)
+  // Below one, keep four significant digits so 0.0001462 does not collapse to 0.000146 or 0.
+  return new Intl.NumberFormat('en-US', { maximumSignificantDigits: 4, maximumFractionDigits: 10 }).format(n)
 }

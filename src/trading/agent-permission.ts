@@ -82,9 +82,13 @@ export type GateResult = { allowed: true; autoRun: boolean } | { allowed: false;
  * Decides whether a command may be prepared and whether it may skip the "is this exact?" step.
  * `valueUsdc` is null when the size cannot be priced; such commands always wait for a yes.
  */
-export function gateCommand(p: AgentPermission, scope: AgentScope, valueUsdc: number | null, spentToday: number, now: number): GateResult {
+export function gateCommand(p: AgentPermission, scope: AgentScope, valueUsdc: number | null, spentToday: number, now: number, protective = false): GateResult {
   if (!isGrantActive(p, now)) return { allowed: false, reason: 'The agent has no permission yet, or it has expired.' }
   if (!p.scopes[scope]) return { allowed: false, reason: `${SCOPE_LABEL[scope]} are switched off in the agent permission.` }
+  // A protective sell order (stop-loss, take-profit, trailing stop, OCO) only escrows tokens the user already holds and
+  // can be cancelled at any time, so the spending limits do not apply. It always waits for a yes, whatever the mode:
+  // size alone must never be the reason a user cannot protect a position.
+  if (protective) return { allowed: true, autoRun: false }
   if (valueUsdc !== null) {
     if (valueUsdc > p.maxPerCommand) return { allowed: false, reason: `This command is about ${fmt(valueUsdc)} USDC, above your per-command limit of ${fmt(p.maxPerCommand)} USDC.` }
     if (spentToday + valueUsdc > p.dailyLimit) return { allowed: false, reason: `This would take today's total to ${fmt(spentToday + valueUsdc)} USDC, above your daily limit of ${fmt(p.dailyLimit)} USDC.` }

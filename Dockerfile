@@ -1,23 +1,25 @@
-# syntax=docker/dockerfile:1.7
-#
 # One Dockerfile, two images:
 #   target "api"  - the Bun backend (quote gateway, keeper, indexer, admin status API)
 #   target "web"  - nginx serving the built frontend and proxying /api to the api service
 # docker-compose.yml builds both. Public VITE_* values are baked into the web image at build time;
 # secrets (ADMIN_TOKEN, KEEPER_PRIVATE_KEY, API keys) only ever reach the api container at run time.
-
-FROM oven/bun:1 AS deps
-WORKDIR /app
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+#
+# There is deliberately no "# syntax=" line: it makes BuildKit pull a frontend image from Docker Hub before
+# anything else, and a slow or blocked pull looks like a build that hangs without output.
 
 # ---------- frontend build ----------
-# Built with Node, not Bun: the Vite build is lighter on Node. A build host with 4 GB of RAM or more is recommended.
+# Built with Node, not Bun: the Vite build is lighter on Node. Bun only installs the packages, inside this stage,
+# so there is no node_modules copy between stages (copying a big dependency tree was the step that stalled).
+# A build host with 3 GB of RAM or more is recommended; 2 GB needs swap.
 FROM node:22-slim AS build
 WORKDIR /app
-ENV NODE_OPTIONS=--max-old-space-size=2560
-COPY --from=deps /app/node_modules ./node_modules
+ENV NODE_OPTIONS=--max-old-space-size=1792
+RUN npm install -g bun@1.3.14 --no-audit --no-fund
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 ARG VITE_DEFAULT_NETWORK=arc-testnet
+ARG VITE_RPC_URL_ARC_TESTNET=
+ARG VITE_RPC_URL_ARC=
 ARG VITE_ORDERS_ADDRESS_ARC_TESTNET=
 ARG VITE_ORDERS_DEPLOY_TX_ARC_TESTNET=
 ARG VITE_ORDERS_ADDRESS_ARC_MAINNET=
@@ -31,7 +33,14 @@ ARG VITE_DOCS_URL=
 ARG VITE_SUPPORT_URL=
 ARG VITE_TERMS_URL=
 ARG VITE_PRIVACY_URL=
+# The Circle Client Key is a public browser key (it ships in the JS bundle, restricted by Passkey Domain). Docker's
+# "secrets in ARG" lint fires on the name only. Real secrets (ADMIN_TOKEN, KEEPER_PRIVATE_KEY, *_API_KEY) are never build args.
+ARG VITE_CIRCLE_CLIENT_KEY=
+ARG VITE_CIRCLE_CLIENT_URL=
+ARG VITE_CIRCLE_SPONSOR_GAS=
 ENV VITE_DEFAULT_NETWORK=$VITE_DEFAULT_NETWORK \
+    VITE_RPC_URL_ARC_TESTNET=$VITE_RPC_URL_ARC_TESTNET \
+    VITE_RPC_URL_ARC=$VITE_RPC_URL_ARC \
     VITE_ORDERS_ADDRESS_ARC_TESTNET=$VITE_ORDERS_ADDRESS_ARC_TESTNET \
     VITE_ORDERS_DEPLOY_TX_ARC_TESTNET=$VITE_ORDERS_DEPLOY_TX_ARC_TESTNET \
     VITE_ORDERS_ADDRESS_ARC_MAINNET=$VITE_ORDERS_ADDRESS_ARC_MAINNET \
@@ -44,9 +53,12 @@ ENV VITE_DEFAULT_NETWORK=$VITE_DEFAULT_NETWORK \
     VITE_DOCS_URL=$VITE_DOCS_URL \
     VITE_SUPPORT_URL=$VITE_SUPPORT_URL \
     VITE_TERMS_URL=$VITE_TERMS_URL \
-    VITE_PRIVACY_URL=$VITE_PRIVACY_URL
+    VITE_PRIVACY_URL=$VITE_PRIVACY_URL \
+    VITE_CIRCLE_CLIENT_KEY=$VITE_CIRCLE_CLIENT_KEY \
+    VITE_CIRCLE_CLIENT_URL=$VITE_CIRCLE_CLIENT_URL \
+    VITE_CIRCLE_SPONSOR_GAS=$VITE_CIRCLE_SPONSOR_GAS
 # Only what the build reads, so editing nginx or server files does not rerun the (slow, memory-hungry) build.
-COPY package.json index.html vite.config.ts tailwind.config.js postcss.config.js tsconfig.json ./
+COPY index.html vite.config.ts tailwind.config.js postcss.config.js tsconfig.json ./
 COPY src ./src
 COPY public ./public
 RUN node node_modules/vite/bin/vite.js build

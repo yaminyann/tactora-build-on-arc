@@ -6,10 +6,10 @@ import { timePrefs } from './format'
 
 export type ThemePref = 'dark' | 'light' | 'system'
 export type Theme = 'dark' | 'light'
-export type Accent = 'lavender' | 'peach' | 'rose' | 'sky' | 'butter'
+export type Accent = 'primary' | 'violet' | 'lavender' | 'glow'
 export type Scale = 'sm' | 'md' | 'lg'
 export type DefaultOrderType = 'market' | 'limit'
-export type Page = 'home' | 'trade' | 'dashboard' | 'agent' | 'settings' | 'admin'
+export type Page = 'home' | 'trade' | 'dashboard' | 'agent' | 'settings' | 'admin' | 'platform'
 export type TimeFormat = '24h' | '12h'
 export type TimeZoneMode = 'local' | 'utc'
 export type StartPage = 'home' | 'trade' | 'dashboard'
@@ -19,22 +19,22 @@ export type ChartType = 'candles' | 'line'
 export type ToastPosition = 'top-center' | 'bottom-center' | 'bottom-right'
 export type ToastMode = 'all' | 'errors' | 'off'
 
-export const PAGES: Page[] = ['home', 'trade', 'dashboard', 'agent', 'settings', 'admin']
+export const PAGES: Page[] = ['home', 'trade', 'dashboard', 'agent', 'settings', 'admin', 'platform']
 
 /**
- * Accent colours as a flat fill (RGB). Text on an accent is always ink, which keeps at least 8:1
- * contrast on every one of them in both themes. The accent is never used as text colour.
+ * Accent colours as a flat fill (RGB), all taken from the Tactora logo. `fg` is the text colour on that fill: white on
+ * the two saturated purples (5.7:1 and 4.8:1), near-black on the two light ones (7.5:1 and 12.4:1). The accent is never
+ * used as text colour.
  */
-export const ACCENTS: Record<Accent, { label: string; rgb: string }> = {
-  lavender: { label: 'Soft lavender', rgb: '201 184 255' },
-  peach: { label: 'Soft peach', rgb: '255 192 154' },
-  rose: { label: 'Soft rose', rgb: '255 179 207' },
-  sky: { label: 'Soft sky', rgb: '168 216 255' },
-  butter: { label: 'Soft butter', rgb: '255 229 138' },
+export const ACCENTS: Record<Accent, { label: string; rgb: string; fg: string }> = {
+  primary: { label: 'Tactora purple', rgb: '113 56 255', fg: '255 255 255' },
+  violet: { label: 'Electric violet', rgb: '150 59 255', fg: '255 255 255' },
+  lavender: { label: 'Lavender', rgb: '193 138 255', fg: '17 14 36' },
+  glow: { label: 'Light highlight', rgb: '229 197 255', fg: '17 14 36' },
 }
 
-/** Names used by earlier builds, mapped to the nearest soft colour so a saved choice survives. */
-const LEGACY_ACCENTS: Record<string, Accent> = { signal: 'butter', orange: 'peach', pink: 'rose', violet: 'lavender' }
+/** Names used by earlier builds, mapped to the nearest brand colour so a saved choice survives. */
+const LEGACY_ACCENTS: Record<string, Accent> = { signal: 'primary', orange: 'primary', pink: 'primary', peach: 'primary', rose: 'primary', sky: 'primary', butter: 'primary' }
 
 export const SCALES: Record<Scale, { label: string; px: number }> = {
   sm: { label: 'Compact', px: 14 },
@@ -96,8 +96,8 @@ const OLD_KEYS = ['lumarc-settings-v1', 'arc-terminal-settings-v1']
 const DEFAULT_NETWORK: NetworkKey = import.meta.env.VITE_DEFAULT_NETWORK === 'arc' ? 'arc' : 'arc-testnet'
 
 export const DEFAULTS: Settings = {
-  themePref: 'light',
-  accent: 'lavender',
+  themePref: 'dark',
+  accent: 'primary',
   timeFormat: '24h',
   timeZone: 'local',
   privacy: false,
@@ -224,7 +224,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement
     root.classList.toggle('dark', theme === 'dark')
     root.style.setProperty('--accent', ACCENTS[state.accent].rgb)
-    root.style.setProperty('--accent-fg', '17 17 17')
+    root.style.setProperty('--accent-fg', ACCENTS[state.accent].fg)
     root.style.fontSize = `${SCALES[state.scale].px}px`
     root.dataset.density = state.density
     root.dataset.motion = animate ? state.motion : 'off'

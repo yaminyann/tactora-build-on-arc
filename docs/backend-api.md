@@ -1,6 +1,6 @@
 # Backend API
 
-The backend is a small Bun HTTP server (`server/index.ts`). In development Vite proxies `/api/*` to it and strips the prefix, so the browser calls `/api/price` and the server sees `/price`. All endpoints are `GET`, return JSON, and send `cache-control: no-store`.
+The backend is a small Bun HTTP server (`server/index.ts`). In development Vite proxies `/api/*` to it and strips the prefix, so the browser calls `/api/price` and the server sees `/price`. Endpoints are `GET` and return JSON (the `POST`s are `/agent-chat`, `/swaps` and the admin chat-model routes below). Most send `cache-control: no-store`; the `/market/*` routes allow a short public cache.
 
 ## Endpoints
 
@@ -19,11 +19,51 @@ Provider and keeper status for the UI.
 }
 ```
 
-`/health` also reports `agentChat` (`{ "enabled": true }` when the optional chat model is configured) and `platformFee` (`{ "bps": 30 }` or `null`). Operators additionally get `platformFee.recipient` and `platformFeeProblem` (why a configured fee was turned off).
+`/health` also reports `agentChat` (`{ "enabled": true, "mode": ... }` when a chat model is switched on) and `platformFee` (`{ "bps": 30 }` or `null`). Operators additionally get `platformFee.recipient` and `platformFeeProblem` (why a configured fee was turned off).
 
 ### `POST /agent-chat`
 
 Optional. Body `{ "text": string (1 to 300 chars), "tokens": string[] (symbols, at most 80), "quote": string }`. Returns `{ "reply": string, "command": string | null }`, where `command` is a single line that already passed the strict command parser. Errors: `503 AGENT_CHAT_DISABLED` (not configured), `400 INPUT_INVALID`, `413` (body over 4 KB), `429 AGENT_CHAT_BUDGET` (daily budget used) or `RATE_LIMITED`, `502 AGENT_CHAT_UNAVAILABLE` (the model did not answer). See [agent-station.md](agent-station.md).
+
+### Platform admin routes
+
+Two kinds of credential open `/admin/*`: the `ADMIN_TOKEN` bearer (break-glass) and a **wallet session token** from signing in. Without either, `403 FORBIDDEN`. The platform admin wallets are the ones listed in `PLATFORM_ADMIN_ADDRESSES`.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /admin/auth/status?address=` | Public. `{ configured, admin }`: whether that one address is a platform admin. Used to show the Platform link |
+| `GET /admin/auth/challenge?address=` | Public, rate-limited. For an admin address returns `{ message, nonce }` to sign (not a transaction). `403 NOT_ADMIN` for any other address |
+| `POST /admin/auth/login` | Body `{ address, nonce, signature }`. Checks the signature against the stored message and returns `{ token, address, expiresAt }` (8 hours). A challenge works once and expires after 5 minutes |
+| `POST /admin/auth/logout` | Ends the session |
+| `GET /admin/session` | `{ kind: 'wallet' or 'token', address, expiresAt }` for a valid credential |
+| `GET /admin/platform/stats?days=30&users=100` | Statistics from the indexer (see [platform-dashboard.md](platform-dashboard.md)). `503 INDEXER_DISABLED` without the indexer. Cached 20 s |
+| `GET /admin/secrets` | Which API keys are set and where from (`admin`, `env`, `none`) plus the last four characters of keys saved here. Never the key |
+| `PUT /admin/secrets/<NAME>` | Body `{ value }`. Saves an encrypted key. `409 SECRETS_DISABLED` without `SECRETS_ENCRYPTION_KEY`. Names: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, `AGENT_LLM_API_KEY`, `ZEROEX_API_KEY` |
+| `DELETE /admin/secrets/<NAME>` | Removes a saved key; the environment value, if any, is used again |
+
+Sign-in accepts plain wallets (EOA signatures) only. Sessions live in memory, so a restart signs everyone out. Login routes have their own rate limit.
+
+### Admin chat-model routes (operator only)
+
+Need an admin credential (see above), otherwise `403 FORBIDDEN`. They configure which model answers `POST /agent-chat`. Provider keys are read from the server environment and are never returned: the responses only say whether a key is present.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /admin/agent-llm` | Saved config, the providers with `keyPresent` and cost notes, today's usage and the remaining daily budget |
+| `PUT /admin/agent-llm` | Save `{ enabled, primary: {provider, model}, fallback?: {provider, model} }`. Rejects `enabled: true` without a valid primary. Persisted in `DATA_DIR/agent-llm.json` |
+| `POST /admin/agent-llm/test` | Send one fixed sample message through `{ provider, model }` and report `ok`, latency and the parsed command |
+| `GET /admin/agent-llm/models?provider=openrouter` | Cheapest live models from OpenRouter's catalogue (free first, then up to about $1.20 per million tokens), cached one hour. Other providers return their presets |
+
+Providers: `openrouter`, `openai`, `gemini` (keys `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) and `custom` (`AGENT_LLM_URL`, `AGENT_LLM_MODEL`, `AGENT_LLM_API_KEY`). With a fallback set, `/agent-chat` tries the primary and uses the fallback only when the primary errors, times out or is out of quota; the reply carries `"via": "primary" | "fallback"`. The strict command parser still validates whatever either model returns.
+
+### `GET /market/token` and `GET /market/candles`
+
+Free market data for any token the picker lists, from DexScreener (price, 24h change, volume, liquidity, best pool) and GeckoTerminal (candles). Neither needs a key. Query: `chainId`, `token` (address), and for candles `tf` (`1m`, `5m`, `15m`, `1h`, `4h`, `1D`, `1W`).
+
+- `/market/token` returns `{ "market": {...} | null }`. `null` means no liquid pool, or `"reason": "unsupported_chain"` (testnet has no DEX data).
+- `/market/candles` returns `{ market, candles, stale, source }`. `stale: true` means cached candles were served because the upstream budget or the upstream itself was unavailable. `{ market: null, candles: [], reason: "no_pool" }` means there is nothing to chart.
+- Responses are cached and coalesced per pair, not per visitor. GeckoTerminal calls are limited to `GECKO_CALLS_PER_MIN` (default 24, the upstream allows about 30). Upstream failure returns `502 MARKET_DATA_UNAVAILABLE`.
+- Pool ids are validated as a 20-byte address or a 32-byte id (newer DexScreener pools) before they are put in an upstream URL.
 
 ### `GET /tokens?chainId=5042`
 

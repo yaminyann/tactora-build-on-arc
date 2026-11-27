@@ -1,11 +1,14 @@
-import { ConnectKitButton } from 'connectkit'
+import { useEffect, useRef, useState } from 'react'
 import { useAccount, useSwitchChain } from 'wagmi'
-import { Moon, Settings as SettingsIcon, Sun } from 'lucide-react'
+import { BookOpen, ChevronDown, Menu, Moon, Settings as SettingsIcon, ShieldCheck, Sun, X } from 'lucide-react'
 import { clsx } from 'clsx'
+import { BRAND } from '@/brand'
+import { ConnectWalletButton } from '@/wallet/ConnectDialog'
 import { NETWORK_LIST, type NetworkConfig } from '@/trading/networks'
 import { useSettings, type Page } from '@/trading/settings'
 import { useBalances } from '@/trading/hooks'
 import { useContractState } from '@/trading/admin'
+import { usePlatformAdmin } from '@/trading/platform'
 import { formatToken } from '@/trading/math'
 import { Logo } from './Logo'
 import { Skeleton } from './ui'
@@ -22,6 +25,8 @@ export function usePageLinks(): { id: Page; label: string }[] {
   return isConnected ? links : [{ id: 'home', label: 'Home' }, ...links]
 }
 
+const iconBtn = 'press grid h-10 w-10 place-items-center rounded-lg border border-control bg-panel text-ink hover:bg-raised'
+
 export function Header({ network }: { network: NetworkConfig }) {
   const s = useSettings()
   const { address, chainId, isConnected } = useAccount()
@@ -33,82 +38,137 @@ export function Header({ network }: { network: NetworkConfig }) {
   const contract = useContractState(network).data
   const me = address?.toLowerCase()
   const isAdmin = Boolean(me && contract && (me === contract.owner.toLowerCase() || me === contract.pendingOwner?.toLowerCase()))
-  const links = usePageLinks()
-  const pages = isAdmin ? [...links, { id: 'admin' as Page, label: 'Admin' }] : links
+  // The server decides who is a platform admin; the link is only a convenience for that wallet.
+  const isPlatformAdmin = Boolean(usePlatformAdmin(address).data?.admin)
+  const nav = [...usePageLinks().filter((l) => l.id !== 'home'), ...(isAdmin ? [{ id: 'admin' as Page, label: 'Admin' }] : []), ...(isPlatformAdmin ? [{ id: 'platform' as Page, label: 'Platform' }] : [])]
+
+  const [menu, setMenu] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setMenu(false)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [menu])
+
+  const go = (p: Page) => {
+    setMenu(false)
+    s.setPage(p)
+  }
+  const balanceText = balances.isLoading ? null : `${formatToken(usdc ?? 0n, network.quote.decimals, 2)} USDC`
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line bg-canvas">
-      <div className="flex h-14 w-full items-center gap-3 px-4 sm:px-6 lg:px-8 md:h-16 md:gap-6">
-        <button onClick={() => s.setPage(isConnected ? 'trade' : 'home')} aria-label={`${isConnected ? 'Open Trade' : 'Home'}`} className="flex min-h-[44px] shrink-0 items-center">
-          <span className="hidden sm:block">
-            <Logo />
-          </span>
-          <span className="sm:hidden">
-            <Logo showName={false} size={32} />
-          </span>
+    <header className="sticky top-0 z-40 border-b border-line bg-canvas/95 backdrop-blur-sm">
+      <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center gap-2 px-3 sm:px-6 md:h-16 md:gap-6 lg:px-8">
+        <button onClick={() => go(isConnected ? 'trade' : 'home')} aria-label={`${BRAND.name}, ${isConnected ? 'open Trade' : 'home'}`} className="flex min-h-[44px] shrink-0 items-center rounded-lg pr-1">
+          <Logo size={26} />
         </button>
 
-        <nav className="hidden items-center gap-2 md:flex" aria-label="Pages">
-          {pages.map((p) => (
-            <button
-              key={p.id}
-              onClick={() => s.setPage(p.id)}
-              aria-current={s.page === p.id ? 'page' : undefined}
-              className={clsx(
-                'min-h-[40px] border px-3.5 text-sm font-bold',
-                s.page === p.id ? 'press border-line bg-accent text-accent-ink shadow-hard-sm' : 'border-transparent text-ink hover:border-line hover:bg-raised',
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
+        <nav className="hidden items-center gap-1 md:flex" aria-label="Pages">
+          {nav.map((p) => {
+            const active = s.page === p.id
+            return (
+              <button
+                key={p.id}
+                onClick={() => go(p.id)}
+                aria-current={active ? 'page' : undefined}
+                className={clsx('relative min-h-[40px] rounded-lg px-3.5 text-sm font-semibold', active ? 'bg-raised text-ink' : 'text-mute hover:bg-raised/70 hover:text-ink')}
+              >
+                {p.label}
+                {active && <span className="absolute inset-x-3.5 -bottom-[13px] hidden h-0.5 rounded-full bg-accent lg:block" aria-hidden="true" />}
+              </button>
+            )
+          })}
         </nav>
 
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          <label className="sr-only" htmlFor="network">
-            Network
-          </label>
-          <select id="network" value={s.networkKey} onChange={(e) => s.setNetworkKey(e.target.value as typeof s.networkKey)} className="min-h-[44px] border border-line bg-panel px-2 text-xs font-bold text-ink md:min-h-[40px]">
-            {NETWORK_LIST.map((n) => (
-              <option key={n.key} value={n.key}>
-                {n.isTestnet ? 'Testnet' : 'Mainnet'}
-              </option>
-            ))}
-          </select>
+          <div className="relative">
+            <label className="sr-only" htmlFor="network">
+              Network
+            </label>
+            <select
+              id="network"
+              value={s.networkKey}
+              onChange={(e) => s.setNetworkKey(e.target.value as typeof s.networkKey)}
+              className="min-h-[40px] cursor-pointer appearance-none rounded-lg border border-control bg-panel py-0 pl-6 pr-6 text-xs font-semibold text-ink hover:bg-raised sm:pl-7 sm:pr-7"
+            >
+              {NETWORK_LIST.map((n) => (
+                <option key={n.key} value={n.key}>
+                  {n.isTestnet ? 'Testnet' : 'Mainnet'}
+                </option>
+              ))}
+            </select>
+            <span className={clsx('pointer-events-none absolute left-2.5 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full', network.isTestnet ? 'bg-warn' : 'bg-up')} aria-hidden="true" />
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-mute" aria-hidden="true" />
+          </div>
 
           {isConnected && (
-            <div className="num sensitive hidden min-h-[40px] items-center border border-line bg-panel px-2.5 text-xs font-semibold lg:flex" title="USDC balance (also your gas balance on Arc)">
-              {balances.isLoading ? <Skeleton className="h-3 w-14" /> : `${formatToken(usdc ?? 0n, network.quote.decimals, 2)} USDC`}
+            <div className="num sensitive hidden min-h-[40px] items-center rounded-lg border border-line bg-panel px-3 text-xs font-medium lg:flex" title="USDC balance (also your gas balance on Arc)">
+              {balanceText ?? <Skeleton className="h-3 w-14" />}
             </div>
           )}
 
           {wrongChain && (
-            <button onClick={() => switchChain({ chainId: network.chainId })} disabled={isPending} className="press min-h-[44px] whitespace-nowrap border border-line bg-down px-2.5 text-xs font-bold text-canvas shadow-hard-sm md:min-h-[40px]">
+            <button onClick={() => switchChain({ chainId: network.chainId })} disabled={isPending} className="press min-h-[40px] whitespace-nowrap rounded-lg bg-down px-3 text-xs font-semibold text-canvas">
               Switch network
             </button>
           )}
 
-          <ConnectKitButton.Custom>
-            {({ isConnected: connected, show, truncatedAddress }) => (
-              <button onClick={show} className="press min-h-[44px] whitespace-nowrap border border-line bg-accent px-3.5 text-xs font-bold text-accent-ink shadow-hard-sm md:min-h-[40px]">
-                {connected ? truncatedAddress : 'Connect wallet'}
-              </button>
-            )}
-          </ConnectKitButton.Custom>
+          <ConnectWalletButton className="min-h-[40px] rounded-lg px-3 text-xs hover:brightness-110 sm:px-3.5" />
 
-          <button aria-label="Switch between light and dark" onClick={s.toggleTheme} className="press hidden h-10 w-10 place-items-center border border-line bg-panel shadow-hard-sm hover:bg-raised md:grid">
+          <button aria-label="Switch between light and dark" onClick={s.toggleTheme} className={clsx(iconBtn, 'hidden md:grid')}>
             {s.theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </button>
           <button
             aria-label="Open settings"
             aria-current={s.page === 'settings' ? 'page' : undefined}
-            onClick={() => s.setPage('settings')}
-            className={clsx('press hidden h-10 w-10 place-items-center border border-line shadow-hard-sm md:grid', s.page === 'settings' ? 'bg-accent text-accent-ink' : 'bg-panel hover:bg-raised')}
+            onClick={() => go('settings')}
+            className={clsx(iconBtn, 'hidden md:grid', s.page === 'settings' && 'border-transparent bg-accent text-accent-ink hover:bg-accent')}
           >
             <SettingsIcon className="h-4 w-4" />
           </button>
+          <button aria-label={menu ? 'Close menu' : 'Open menu'} aria-expanded={menu} aria-controls="mobile-menu" onClick={() => setMenu((v) => !v)} className={clsx(iconBtn, 'md:hidden')}>
+            {menu ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+          </button>
         </div>
       </div>
+
+      {menu && (
+        <>
+          <div className="fixed inset-0 top-14 z-30 bg-black/50 md:hidden" onClick={() => setMenu(false)} aria-hidden="true" />
+          <div id="mobile-menu" ref={menuRef} className="absolute inset-x-0 top-full z-40 border-b border-line bg-panel p-3 shadow-hard md:hidden">
+            <div className="mx-auto max-w-md space-y-1">
+              {isConnected && (
+                <div className="flex min-h-[48px] items-center justify-between rounded-lg bg-raised px-3 text-sm">
+                  <span className="text-mute">USDC balance</span>
+                  <span className="num sensitive font-semibold">{balanceText ?? '...'}</span>
+                </div>
+              )}
+              {nav.filter((l) => l.id === 'admin' || l.id === 'platform').map((p) => (
+                <button key={p.id} onClick={() => go(p.id)} className="flex min-h-[48px] w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold hover:bg-raised">
+                  <ShieldCheck className="h-4 w-4 text-brand" /> {p.label}
+                </button>
+              ))}
+              <button onClick={() => go('settings')} className="flex min-h-[48px] w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold hover:bg-raised">
+                <SettingsIcon className="h-4 w-4 text-brand" /> Settings
+              </button>
+              <button
+                onClick={() => {
+                  s.toggleTheme()
+                  setMenu(false)
+                }}
+                className="flex min-h-[48px] w-full items-center gap-3 rounded-lg px-3 text-left text-sm font-semibold hover:bg-raised"
+              >
+                {s.theme === 'dark' ? <Sun className="h-4 w-4 text-brand" /> : <Moon className="h-4 w-4 text-brand" />}
+                {s.theme === 'dark' ? 'Light theme' : 'Dark theme'}
+              </button>
+              <a href={BRAND.links.docs} target="_blank" rel="noopener noreferrer" className="flex min-h-[48px] w-full items-center gap-3 rounded-lg px-3 text-sm font-semibold hover:bg-raised">
+                <BookOpen className="h-4 w-4 text-brand" /> Documentation
+              </a>
+            </div>
+          </div>
+        </>
+      )}
     </header>
   )
 }

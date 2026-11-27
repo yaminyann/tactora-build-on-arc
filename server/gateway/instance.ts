@@ -26,8 +26,8 @@ function testRouters(): QuoteProvider[] {
   const reader = viemTestRouterReader({ readContract: (args) => publicClientFor(ARC_TESTNET).readContract(args as never) })
   const h = harness as { router?: string; routerB?: string }
   const out: QuoteProvider[] = []
-  if (h.router) out.push(createTestRouterProvider({ id: 'test-router', router: h.router as Address, chainId: ARC_TESTNET, reader }))
-  if (h.routerB) out.push(createTestRouterProvider({ id: 'test-router-b', router: h.routerB as Address, chainId: ARC_TESTNET, reader }))
+  if (h.router) out.push(createTestRouterProvider({ id: 'test-router', router: h.router as Address, chainId: ARC_TESTNET, reader, fundedToken: USDC as Address }))
+  if (h.routerB) out.push(createTestRouterProvider({ id: 'test-router-b', router: h.routerB as Address, chainId: ARC_TESTNET, reader, fundedToken: USDC as Address }))
   return out
 }
 

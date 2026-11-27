@@ -5,6 +5,7 @@ import { erc20Abi, parseUnits } from 'viem'
 import { ChevronDown, FlaskConical } from 'lucide-react'
 import type { NetworkConfig, TokenInfo } from '@/trading/networks'
 import { useTx } from '@/trading/tx'
+import { useNowSeconds } from '@/trading/hooks'
 import { formatToken } from '@/trading/math'
 import { Button, Notice, Panel } from './ui'
 
@@ -24,18 +25,21 @@ export function TestnetTools({ network, base }: { network: NetworkConfig; base: 
   const qc = useQueryClient()
   const [price, setPrice] = useState('')
   const [open, setOpen] = useState(false)
+  const nowSec = useNowSeconds()
 
   const feed = base?.testFeed
   const state = useQuery({
     queryKey: ['test-feed', feed],
     enabled: Boolean(client && feed),
-    refetchInterval: 8_000,
+    refetchInterval: 20_000,
     queryFn: async () => {
       const [, answer, , updatedAt] = await client!.readContract({ address: feed!, abi: feedAbi, functionName: 'latestRoundData' })
       const routerUsdc = network.testHarness
         ? await client!.readContract({ address: network.quote.address, abi: erc20Abi, functionName: 'balanceOf', args: [network.testHarness.router] })
         : 0n
-      return { answer, updatedAt: Number(updatedAt), routerUsdc }
+      // Every price is quote-per-base, so the USDC feed must be fresh too or every order is refused as stale.
+      const usdc = network.testHarness ? await client!.readContract({ address: network.testHarness.usdcFeed, abi: feedAbi, functionName: 'latestRoundData' }) : null
+      return { answer, updatedAt: Number(updatedAt), routerUsdc, usdcUpdatedAt: usdc ? Number(usdc[3]) : null }
     },
   })
 
@@ -57,6 +61,14 @@ export function TestnetTools({ network, base }: { network: NetworkConfig; base: 
   }
 
   const current = state.data ? Number(state.data.answer) / 1e8 : null
+  const STALE_AFTER = 6 * 3600
+  const usdcStale = state.data?.usdcUpdatedAt != null && nowSec - state.data.usdcUpdatedAt > STALE_AFTER
+  const baseStale = state.data ? nowSec - state.data.updatedAt > STALE_AFTER : false
+  /** Re-stamps every feed an order price depends on: the token's own and the USDC one. */
+  const refreshFeeds = async () => {
+    await run('Refresh feed', { address: feed, abi: feedAbi, functionName: 'refresh', args: [] })
+    if (network.testHarness) await run('Refresh USDC feed', { address: network.testHarness.usdcFeed, abi: feedAbi, functionName: 'refresh', args: [] })
+  }
   const setTo = (usd: number) => {
     if (!(usd > 0)) return
     void run(`Set ${base.symbol} test price`, { address: feed, abi: feedAbi, functionName: 'setPrice', args: [parseUnits(usd.toFixed(8), 8)] })
@@ -115,10 +127,15 @@ export function TestnetTools({ network, base }: { network: NetworkConfig; base: 
           >
             Get {base.faucetAmount} {base.symbol}
           </Button>
-          <Button variant="ghost" className="min-h-[40px] border border-line" disabled={!address || tx.busy} onClick={() => void run('Refresh feed', { address: feed, abi: feedAbi, functionName: 'refresh', args: [] })}>
-            Refresh feed
+          <Button variant="ghost" className="min-h-[40px] border border-line" disabled={!address || tx.busy} onClick={() => void refreshFeeds()}>
+            Refresh feeds
           </Button>
         </div>
+        {(usdcStale || baseStale) && (
+          <Notice tone="warn">
+            {usdcStale && baseStale ? 'The USDC and token test prices are' : usdcStale ? 'The USDC test price is' : 'The token test price is'} older than 6 hours, so the contract refuses new orders as stale. Press Refresh feeds.
+          </Notice>
+        )}
         <div className="flex items-center justify-between text-mute">
           <span>Router USDC liquidity</span>
           <span className="num">{state.data ? formatToken(state.data.routerUsdc, network.quote.decimals, 2) : '-'} USDC</span>

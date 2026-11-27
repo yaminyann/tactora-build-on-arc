@@ -202,7 +202,7 @@ export function DcaTable({
             {DCA_STATUS_LABEL[d.status]}
             {d.status === DcaStatus.ACTIVE && d.reasonCode !== undefined && d.reasonCode !== 2 ? ` - ${DCA_REASON[d.reasonCode]}` : ''}
           </Badge>,
-          live ? (d.nextExecution <= now ? 'Due' : `in ${fmtDuration(d.nextExecution - now)}`) : '-',
+          d.status === DcaStatus.PAUSED ? 'On resume' : live ? (d.nextExecution <= now ? 'Due' : `in ${fmtDuration(d.nextExecution - now)}`) : '-',
           `${formatToken(d.budgetRemaining, network.quote.decimals, 2)} ${network.quote.symbol}`,
           d.executions,
           avg > 0n ? formatPrice18(avg) : '-',

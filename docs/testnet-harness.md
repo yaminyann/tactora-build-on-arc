@@ -58,7 +58,7 @@ The script is idempotent: it prints the seconds remaining for entries that are n
 ## Using it in the app
 
 1. Select Arc Testnet and pick **tBTC**, **tETH** or **tSOL** (marked TEST).
-2. In **Testnet tools**: get test tokens from the faucet, read the current test price, and set a new price (or step it by -10%, -5%, +5%, +10%). **Refresh feed** re-stamps the price so it does not go stale (feeds are registered with the longest allowed staleness, two days).
+2. In **Testnet tools**: get test tokens from the faucet, read the current test price, and set a new price (or step it by -10%, -5%, +5%, +10%). **Refresh feeds** re-stamps the token feed and the USDC feed so neither goes stale (feeds are registered with the longest allowed staleness, two days). Every price is quote-per-base, so a stale USDC feed blocks all new orders even when the token feed is fresh; the panel warns when either is older than 6 hours. The built-in keeper also re-stamps any harness feed older than 6 hours every 10 minutes (testnet only, switch off with `KEEPER_REFRESH_TEST_FEEDS=false`), so the testnet stays usable without anyone pressing the button. A test router that cannot pay out USDC now answers "no liquidity" instead of quoting a swap that reverts; refill it by sending test USDC to the router address.
 3. Market orders go to the test router (route shown as "Test router"). Conditional orders and DCA go to the order contract.
 4. Start a keeper so triggered orders actually run:
 

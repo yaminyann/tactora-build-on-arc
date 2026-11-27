@@ -1,26 +1,42 @@
-# Lumarc design direction
+# Tactora design direction
 
-Owner direction (requested by the project owner): retro / neo-brutalist. Read this before touching UI, together with the antislop rules.
+Tactora (tactora.xyz) is an intelligent on-chain trading platform on Arc: advanced order tools and natural-language AI agents, from the user's own wallet. Read this before touching UI.
 
-Design read: non-custodial trading terminal and its landing page, for traders on Arc, in a neo-brutalist retro style. Dial: ENERGY 3 / RHYTHM 3 / MOTION 2.
+Design read: premium dark fintech terminal. Quiet surfaces, one brand purple, real product shown working. Dial: ENERGY 2 / RHYTHM 3 / MOTION 1.
 
 ## Identity
 
+Every colour comes from the supplied logo (`public/tactora-mark.png`, `tactora-mark-wide.png`).
+
+| Token | Value | Use |
+| --- | --- | --- |
+| Primary purple | `#7138FF` | The accent fill: main button, active state. White text on it (5.7:1) |
+| Electric violet | `#963BFF` | Alternative accent in Settings. White text (4.8:1) |
+| Lavender | `#C18AFF` | Brand text and thin accents in dark mode (8:1 on the background); alternative accent with ink text |
+| Light highlight | `#E5C5FF` | Alternative accent with ink text (12:1) |
+| Dark purple | `#3510A8` | Reserved for pressed states and print; not used as a surface |
+| Background | `#080711` | Dark theme page. Panels `#0F0D1C`, raised `#18152A`, hairlines `#282442` |
+| Light theme | `#F7F6FC` page, white panels, `#110E24` ink | Same hues on a pale lilac paper. Both themes ship |
+
+Tokens live in `src/index.css` (`:root` for light, `.dark` for dark) as space-separated RGB so Tailwind can add opacity. `--line` is the quiet hairline for cards and dividers; `--control` is the 3:1 border for inputs and buttons so they are findable; `--brand` is the purple allowed as text; `--ring` is the focus colour. The accent is chosen in Settings from four brand colours and always carries its own text colour (`ACCENTS` in `settings.tsx`).
+
 | Part | Decision | Reason |
 | --- | --- | --- |
-| Surface | Soft mist-blue paper (`#e7edf6`) in light, blue-black (`#13151d`) in dark | A flat printed-page feel is the retro half of the brief. Both themes ship and are tested (R-34) |
-| Ink | Near-black 1px borders on every panel, input and button | Hard edges are the neo-brutalist half. Borders carry structure, so no shadows are needed for hierarchy |
-| Accent | One flat fill, soft lavender by default (peach, rose, sky, butter in Settings). Soft pastels, always with ink text; the boundary comes from the 1px ink border, never from the fill | One accent used for the primary action and the active state only. Always a fill with ink text, never accent-coloured text, so contrast holds on both themes |
-| Semantic | Green and red for buy/sell, gain/loss only | A trading UI needs them. They do not decorate |
-| Type | Archivo Black for headings, Archivo for text, IBM Plex Mono for numbers | Archivo is a blunt grotesque with real weight for the poster voice. Plex Mono gives numbers a typewriter feel and tabular alignment. None are the usual AI defaults |
-| Radius | 0 everywhere | Square corners are the identity. Round shapes appear only on token images and the status dot |
-| Shadow | A hard offset (no blur) on buttons and on featured blocks only | Marks what can be pressed or what is featured. Everything else sits flat |
-| Motion | Page fade, press-down on buttons, scroll reveal on the landing page, one looping demo | Fade orients navigation. The press effect confirms a click. The demo is the product shown working. Nothing else loops |
+| Type | Archivo 700 and 800 for headings (tight tracking), Archivo for text, IBM Plex Mono for numbers | One grotesque with real weight, and a mono that aligns prices and amounts. No tracked capitals anywhere |
+| Shape | 8px controls, 12px cards, 16 to 24px for the few featured surfaces | Rounded enough to feel current, never pill-shaped except toggles |
+| Edges | 1px hairlines; no shadows for hierarchy. A soft lift only on the one featured surface per screen (`shadow-hard`, `hard-lg`: the names are old, the values are soft) | Borders carry structure; elevation marks focus |
+| Semantic | Green and red for buy and sell, gain and loss only | A trading UI needs them. They never decorate |
+| Icons | Lucide, 2px round stroke, only where they name a thing, always with text | Not decoration |
+| Motion | Page fade, press settles 1px, scroll reveal on the landing page | Nothing loops. Settings > Motion (reduced, off) removes it |
 
-## Rules held on top of the direction
+## Rules
 
-- No gradients, blur, glow, grid or orb backgrounds, emoji, em dashes, or decorative badges.
-- Icons are used only where they name a destination, with text labels beside them. Stroke style is set once in `index.css`.
-- Every number on the landing page is live or labelled as an example. No invented users, volumes or testimonials.
-- Mobile is an app shell: a bottom tab bar, 44px targets, safe-area padding, and 16px inputs so iOS does not zoom.
-- Focus is a 3px ink outline everywhere. Nothing removes it without a replacement.
+- No gradient backgrounds, glow, orbs, glass panels, grids or textures. The accent is a flat fill. Elevation is lightness, not a glow.
+- No emoji, no em dashes, no tracked or all-caps labels, no eyebrows above headings, no arrows glued to link text, no decorative status dots (a dot marks a real state, such as testnet or mainnet).
+- No card inside a card. One containment layer; separate with hairlines.
+- Every number on the landing page is live or a plain fact about the product. No invented users, volume, TVL, partners, audits or testimonials. Where something is not done (an audit, a mainnet contract), the page says so.
+- The landing page answers the visitor's questions in order: who it is for, whether to trust it, whether it understands the problem, what they get, how it works, what it costs, what if it goes wrong. Price comes after value; the FAQ after price.
+- The hero shows the product doing its job: the real command parser and chat rules read a prompt at a live price, next to a real chart. Never a drawn mock window.
+- The Agent never looks like it executed something it only proposed. A proposal says so, and the wallet approval is a separate, visible step.
+- Mobile is an app shell: a compact header with a menu, a bottom tab bar, 44px targets, safe-area padding and 16px inputs so iOS does not zoom.
+- Focus is a 2px brand-colour ring everywhere. `overflow-x: clip` on `html` and `body`; no 100vw widths.

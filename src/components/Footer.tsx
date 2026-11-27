@@ -3,23 +3,24 @@ import { BRAND } from '@/brand'
 import { NETWORKS } from '@/trading/networks'
 import { useSettings } from '@/trading/settings'
 import { useBackendHealth } from '@/trading/hooks'
+import { Logo } from './Logo'
 import { Modal } from './ui'
 
 function Cell({ label, value, tone }: { label: string; value: string; tone?: 'up' | 'down' }) {
   return (
-    <div className="border-canvas/40 px-4 py-3 sm:border-l sm:first:border-l-0">
-      <div className="text-xs text-canvas/70">{label}</div>
-      <div className="num mt-0.5 flex items-center gap-2 text-sm font-semibold">
-        {/* The square marks a real state: backend reachable, keeper running. */}
-        {tone && <span className={tone === 'up' ? 'h-2.5 w-2.5 bg-up' : 'h-2.5 w-2.5 bg-down'} aria-hidden="true" />}
+    <div className="flex items-center gap-2 text-xs">
+      <span className="text-mute">{label}</span>
+      <span className="num flex items-center gap-1.5 font-semibold">
+        {/* The dot marks a real state: backend reachable, keeper running. */}
+        {tone && <span className={tone === 'up' ? 'h-2 w-2 rounded-full bg-up' : 'h-2 w-2 rounded-full bg-down'} aria-hidden="true" />}
         {value}
-      </div>
+      </span>
     </div>
   )
 }
 
 function FooterLink({ href, children, onClick }: { href?: string; children: ReactNode; onClick?: () => void }) {
-  const cls = 'inline-flex min-h-[44px] items-center text-sm font-semibold underline decoration-2 underline-offset-4 hover:bg-accent hover:text-accent-ink'
+  const cls = 'inline-flex min-h-[44px] items-center text-sm text-mute hover:text-ink'
   if (href) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className={cls}>
@@ -46,15 +47,15 @@ export function Footer() {
   const keeper = health.data?.keeper
 
   return (
-    <footer className="mt-8 pb-24 md:pb-0">
-      <div className="bg-ink text-canvas">
-        <div className="grid w-full gap-8 px-4 py-10 sm:px-6 lg:px-8 md:grid-cols-[1.2fr_1fr] md:py-14">
+    <footer className="mt-12 pb-20 md:pb-0">
+      <div className="border-t border-line bg-panel">
+        <div className="mx-auto grid w-full max-w-[1600px] gap-8 px-4 py-10 sm:px-6 md:grid-cols-[1.2fr_1fr] lg:px-8">
           <div>
-            <button onClick={() => setPage('home')} className="font-display text-5xl leading-none sm:text-7xl" aria-label={`${BRAND.name} home`}>
-              {BRAND.name}
+            <button onClick={() => setPage('home')} className="flex min-h-[44px] items-center rounded-lg" aria-label={`${BRAND.name} home`}>
+              <Logo size={28} />
             </button>
-            <p className="mt-4 max-w-md text-sm text-canvas/80">
-              A non-custodial terminal for Arc. Funds stay in your wallet or in the order contract. {BRAND.name} never holds them.
+            <p className="mt-3 max-w-md text-sm text-mute">
+              A non-custodial trading platform for Arc. Funds stay in your wallet or in the order contract. {BRAND.name} never holds them.
             </p>
           </div>
           <div className="grid content-start gap-x-8 gap-y-1 sm:grid-cols-2">
@@ -73,8 +74,8 @@ export function Footer() {
             {BRAND.links.telegram && <FooterLink href={BRAND.links.telegram}>Telegram</FooterLink>}
           </div>
         </div>
-        <div className="border-t border-canvas/40">
-          <div className="grid w-full px-4 sm:px-6 lg:px-8 sm:grid-cols-3">
+        <div className="border-t border-line">
+          <div className="mx-auto flex w-full max-w-[1600px] flex-wrap items-center gap-x-8 gap-y-2 px-4 py-4 sm:px-6 lg:px-8">
             <Cell label="Backend" value={health.isSuccess ? 'Online' : health.isLoading ? 'Checking' : 'Offline'} tone={health.isSuccess ? 'up' : health.isLoading ? undefined : 'down'} />
             <Cell label="Network" value={net.label} />
             <Cell label="Keeper" value={keeper?.running ? 'Running' : 'Not running'} tone={keeper?.running ? 'up' : undefined} />
@@ -103,14 +104,14 @@ export function Footer() {
                 {BRAND.name} is software that helps you send transactions from your own wallet. It does not hold your keys or your funds, and it is not a broker, an exchange or an adviser.
               </p>
               <p>You are responsible for your transactions, for obeying the laws that apply to you, and for the tokens you choose to trade. The software is provided as is, without warranty.</p>
-              <p className="border border-line bg-raised p-3 text-xs">This is a plain-language placeholder. Have a lawyer replace it, then set VITE_TERMS_URL so this link opens your real terms.</p>
+              <p className="rounded-lg border border-line bg-raised p-3 text-xs">This is a plain-language placeholder. Have a lawyer replace it, then set VITE_TERMS_URL so this link opens your real terms.</p>
             </>
           )}
           {legal === 'privacy' && (
             <>
               <p>The app stores your settings and recent swap hashes in your browser only. It reads public blockchain data for your wallet address.</p>
               <p>Quote requests, token lists and chart data go through this site's backend and on to KyberSwap, Coinbase market data and the RPC provider. They see your IP address and the request.</p>
-              <p className="border border-line bg-raised p-3 text-xs">This is a plain-language placeholder. Have a lawyer replace it, then set VITE_PRIVACY_URL so this link opens your real policy.</p>
+              <p className="rounded-lg border border-line bg-raised p-3 text-xs">This is a plain-language placeholder. Have a lawyer replace it, then set VITE_PRIVACY_URL so this link opens your real policy.</p>
             </>
           )}
         </div>

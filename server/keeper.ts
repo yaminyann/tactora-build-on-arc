@@ -28,6 +28,7 @@ import { alerter } from './alerts'
 import { applyGasFloor, expectedFeeUsdc6, isProfitable, loadKeeperKey, NonceTracker, StandbyGate, type ProfitPolicy } from './keeper-core'
 import { Backoff, chunk, inShard, mapLimit, metrics } from './scale'
 import { redactSecrets } from './security'
+import harness from '../src/trading/testnet-harness.json'
 
 const OPEN = 0
 const ACTIVE_DCA = 0
@@ -243,11 +244,22 @@ export function startKeeper(): void {
       wakeIdle?.()
     })
   }
+  // Testnet only: the test price feeds go stale after a few hours, and a stale feed makes the contract refuse
+  // every new order. Re-stamping them (price unchanged) is free for users and keeps the testnet usable.
+  const keepFeedsFresh = !mainnet && process.env.KEEPER_REFRESH_TEST_FEEDS !== 'false'
+  let lastFeedCheck = 0
   const loop = async () => {
     for (;;) {
       const started = Date.now()
       try {
         await tick(ctx)
+        if (keepFeedsFresh && started - lastFeedCheck > 10 * 60_000) {
+          lastFeedCheck = started
+          await refreshStaleTestFeeds(ctx).catch((e: unknown) => {
+            status.notes = status.notes.filter((n) => !n.startsWith('Test feed refresh'))
+            status.notes.push(`Test feed refresh failed: ${e instanceof Error ? redactSecrets(e.message).slice(0, 120) : 'unknown error'}`)
+          })
+        }
         status.lastError = null
         metrics.keeper.consecutiveTickErrors = 0
         metrics.keeper.lastOkTickAt = Date.now()
@@ -273,6 +285,33 @@ export function startKeeper(): void {
     }
   }
   void loop()
+}
+
+const feedAbi = [
+  { type: 'function', name: 'latestRoundData', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint80' }, { type: 'int256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint80' }] },
+  { type: 'function', name: 'refresh', stateMutability: 'nonpayable', inputs: [], outputs: [] },
+] as const
+
+/** Test feeds older than this get re-stamped. The contract's own limit is up to 48 hours. */
+const TEST_FEED_MAX_AGE_S = 6 * 3600
+
+/** Re-stamps the harness test feeds (USDC and every test asset) that are close to going stale. */
+async function refreshStaleTestFeeds(ctx: Ctx): Promise<void> {
+  const h = harness as { usdcFeed?: string; assets?: { feed: string }[] }
+  const feeds = [h.usdcFeed, ...(h.assets ?? []).map((a) => a.feed)].filter((a): a is string => Boolean(a)) as Address[]
+  if (feeds.length === 0) return
+  const reads = await ctx.publicClient.multicall({
+    contracts: feeds.map((f) => ({ address: f, abi: feedAbi, functionName: 'latestRoundData' as const })),
+    allowFailure: true,
+  })
+  const now = Math.floor(Date.now() / 1000)
+  for (let i = 0; i < feeds.length; i++) {
+    const r = reads[i]
+    if (r.status !== 'success') continue
+    if (now - Number(r.result[3]) < TEST_FEED_MAX_AGE_S) continue
+    await ctx.wallet.writeContract({ address: feeds[i], abi: feedAbi, functionName: 'refresh', account: ctx.wallet.account, chain: ctx.wallet.chain } as never)
+    metrics.keeper.maintenanceCalls += 1
+  }
 }
 
 interface Candidate {

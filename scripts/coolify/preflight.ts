@@ -42,6 +42,13 @@ console.log(`Preflight for ${file} (${isMain ? 'MAINNET' : 'testnet'})`)
 if ((env.ADMIN_TOKEN ?? '').length >= 24) ok('ADMIN_TOKEN is set and long enough')
 else bad('ADMIN_TOKEN must be at least 24 characters')
 
+if ((env.SECRETS_ENCRYPTION_KEY ?? '').length >= 16) ok('SECRETS_ENCRYPTION_KEY is set (API keys can be saved from the Platform dashboard)')
+else warn('SECRETS_ENCRYPTION_KEY is not set: API keys cannot be saved from the dashboard and must go in the environment')
+const admins = (env.PLATFORM_ADMIN_ADDRESSES ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+if (admins.length === 0) warn('PLATFORM_ADMIN_ADDRESSES is empty: nobody can sign in to the Platform dashboard with a wallet (only the ADMIN_TOKEN works)')
+else if (admins.some((a) => !isAddress(a))) bad('PLATFORM_ADMIN_ADDRESSES contains an address that is not valid')
+else ok(`${admins.length} platform admin wallet(s)`)
+
 if (env.KEEPER_NETWORK !== network) bad(`KEEPER_NETWORK (${env.KEEPER_NETWORK || 'unset'}) must match VITE_DEFAULT_NETWORK (${network})`)
 if (env.INDEXER_NETWORK !== network) warn(`INDEXER_NETWORK (${env.INDEXER_NETWORK || 'unset'}) differs from ${network}`)
 if (env.INDEXER_ENABLED !== 'true') warn('INDEXER_ENABLED is not true: the admin page cannot list tokens, routers or queued changes')

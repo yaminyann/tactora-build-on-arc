@@ -80,10 +80,10 @@ export function SettingsPage({ network }: { network: NetworkConfig }) {
 
   const exportSettings = () => {
     const { page: _page, ...data } = s
-    const blob = new Blob([JSON.stringify({ app: 'lumarc', exportedAt: new Date().toISOString(), settings: data }, null, 2)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify({ app: 'tactora', exportedAt: new Date().toISOString(), settings: data }, null, 2)], { type: 'application/json' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = 'lumarc-settings.json'
+    a.download = 'tactora-settings.json'
     a.click()
     URL.revokeObjectURL(a.href)
   }
@@ -92,7 +92,7 @@ export function SettingsPage({ network }: { network: NetworkConfig }) {
     try {
       if (file.size > 64 * 1024) throw new Error('That file is too large to be a settings export.')
       const json = JSON.parse(await file.text()) as { app?: string; settings?: unknown }
-      if (json.app !== 'lumarc' || typeof json.settings !== 'object' || json.settings === null) throw new Error('This is not a Lumarc settings file.')
+      if ((json.app !== 'tactora' && json.app !== 'lumarc') || typeof json.settings !== 'object' || json.settings === null) throw new Error('This is not a Tactora settings file.')
       s.importSettings(json.settings)
       setNote({ tone: 'ok', text: 'Settings imported. Unknown or out-of-range values were replaced by defaults.' })
     } catch (e) {
@@ -112,7 +112,7 @@ export function SettingsPage({ network }: { network: NetworkConfig }) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-[240px_minmax(0,1fr)]">
         {/* On phones this is the list screen; on wider screens it is a permanent side menu. */}
         <nav aria-label="Settings sections" className={clsx('min-w-0 md:block', section === null ? 'block' : 'hidden')}>
-          <ul className="border border-line bg-panel md:sticky md:top-20">
+          <ul className="overflow-hidden rounded-xl border border-line bg-panel md:sticky md:top-20">
             {SECTIONS.map((x, i) => (
               <li key={x.id} className={clsx(i > 0 && 'border-t border-line')}>
                 <button
@@ -155,7 +155,7 @@ export function SettingsPage({ network }: { network: NetworkConfig }) {
                   <Group title="Theme">
                     <Segmented className="w-full" value={s.themePref} onChange={(v: ThemePref) => s.setThemePref(v)} options={[{ id: 'light', label: 'Light' }, { id: 'dark', label: 'Dark' }, { id: 'system', label: 'System' }]} />
                   </Group>
-                  <Group title="Accent colour" hint="Used for the main button and the active tab. Text on it is always black.">
+                  <Group title="Accent colour" hint="Used for the main button and the active tab. All four come from the Tactora logo.">
                     <div className="flex flex-wrap gap-3">
                       {(Object.keys(ACCENTS) as Accent[]).map((a) => (
                         <button

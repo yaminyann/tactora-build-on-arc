@@ -25,6 +25,8 @@ export interface AgentChatConfig {
   model: string
   dailyCalls: number
   timeoutMs: number
+  /** Extra request headers some providers ask for (for example an app title). */
+  headers?: Record<string, string>
 }
 
 export interface AgentChatInput {
@@ -155,7 +157,7 @@ type Fetch = (input: string, init: RequestInit) => Promise<Response>
 export async function askModel(cfg: AgentChatConfig, input: AgentChatInput, fetchImpl: Fetch = fetch): Promise<AgentChatOutput | null> {
   const res = await fetchImpl(`${cfg.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}) },
+    headers: { 'content-type': 'application/json', ...(cfg.headers ?? {}), ...(cfg.apiKey ? { authorization: `Bearer ${cfg.apiKey}` } : {}) },
     body: JSON.stringify({ model: cfg.model, messages: buildMessages(input), temperature: 0, max_tokens: 220 }),
     signal: AbortSignal.timeout(cfg.timeoutMs),
   })

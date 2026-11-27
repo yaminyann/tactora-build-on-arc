@@ -3,35 +3,47 @@
 @tailwind utilities;
 
 /*
- * Neo-brutalist tokens (see DESIGN.md). Borders and text share one ink colour, so every panel edge is
- * as dark as the text, drawn as a thin 1px line on a soft mist-blue paper. The accent pair is set at runtime from Settings; the values here are defaults.
- * Contrast (checked with the WCAG formula): ink on paper 16:1, muted on paper 6.6:1, ink on every
- * accent 8:1 or better.
+ * Tactora design tokens (see DESIGN.md). Every colour comes from the logo:
+ *   primary #7138FF, electric violet #963BFF, lavender #C18AFF, light highlight #E5C5FF, dark purple #3510A8, background #080711.
+ * Dark is the default theme; light keeps the same hues on a pale lilac-white paper.
+ * Contrast (WCAG formula, checked with the contrast script): text on every surface 5:1 or better, white on primary 5.7:1,
+ * ink on lavender 7.5:1, control borders at least 3.4:1 on their surface.
+ * Tokens are space-separated RGB so Tailwind can add opacity. The accent pair is set at runtime from Settings.
  */
 :root {
-  --bg: 231 237 246;
-  --panel: 248 250 254;
-  --panel2: 214 224 240;
-  --line: 23 26 38;
-  --fg: 23 26 38;
-  --muted: 74 82 104;
-  --accent: 201 184 255;
-  --accent-fg: 17 17 17;
+  --bg: 247 246 252; /* page */
+  --panel: 255 255 255; /* cards */
+  --panel2: 240 238 250; /* raised and hover */
+  --line: 224 220 242; /* dividers and card edges */
+  --control: 133 127 166; /* borders of inputs and buttons, 3:1 or better */
+  --fg: 17 14 36;
+  --muted: 92 88 120;
+  --accent: 113 56 255; /* primary #7138FF */
+  --accent-fg: 255 255 255;
+  --brand: 81 31 200; /* purple used as text or a thin accent line */
+  --ring: 113 56 255;
+  --shadow: 40 30 90;
   --up: 4 105 54;
   --down: 190 24 43;
   --warn: 133 77 0;
+  --font-sans: 'Archivo', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   color-scheme: light;
 }
 
 .dark {
-  --bg: 19 21 29;
-  --panel: 29 32 43;
-  --panel2: 43 47 62;
-  --line: 196 204 224;
-  --fg: 236 240 250;
-  --muted: 160 168 190;
-  --accent: 201 184 255;
-  --accent-fg: 17 17 17;
+  --bg: 8 7 17; /* #080711 */
+  --panel: 15 13 28;
+  --panel2: 24 21 42;
+  --line: 40 36 66;
+  --control: 110 104 143;
+  --fg: 240 238 250;
+  --muted: 150 145 178;
+  --accent: 113 56 255;
+  --accent-fg: 255 255 255;
+  --brand: 193 138 255; /* lavender #C18AFF */
+  --ring: 193 138 255;
+  --shadow: 0 0 0;
   --up: 74 222 128;
   --down: 255 107 125;
   --warn: 251 191 36;
@@ -42,10 +54,15 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   margin: 0;
   min-height: 100dvh;
-  font-family: 'Archivo', sans-serif;
+  font-family: var(--font-sans);
   background: rgb(var(--bg));
   color: rgb(var(--fg));
   -webkit-font-smoothing: antialiased;
@@ -55,32 +72,32 @@ h1,
 h2,
 h3,
 .font-display {
-  font-family: 'Archivo Black', 'Archivo', sans-serif;
-  font-weight: 400;
-  letter-spacing: -0.01em;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
 }
 
-/* Numbers are set in a typewriter mono so columns line up and prices read as data. */
+/* Numbers are set in a mono so columns line up and prices read as data. */
 .num {
-  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
 ::selection {
-  background: rgb(var(--accent));
-  color: rgb(var(--accent-fg));
+  background: rgb(var(--accent) / 0.45);
+  color: rgb(var(--fg));
 }
 
-/* One chunky icon style for the whole app, instead of the library default. */
 svg.lucide {
-  stroke-width: 2.6;
-  stroke-linecap: square;
-  stroke-linejoin: miter;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-/* Keyboard focus is always visible. Inputs draw theirs on their wrapper (see Field). */
+/* Keyboard focus is always visible, in the brand colour. Inputs draw theirs on their wrapper (see Field). */
 :focus-visible {
-  outline: 2px solid rgb(var(--fg));
+  outline: 2px solid rgb(var(--ring));
   outline-offset: 2px;
 }
 
@@ -88,22 +105,21 @@ button,
 a,
 select {
   transition:
-    color 0.12s ease,
-    background-color 0.12s ease,
-    border-color 0.12s ease,
-    opacity 0.12s ease;
+    color 0.14s ease,
+    background-color 0.14s ease,
+    border-color 0.14s ease,
+    opacity 0.14s ease;
 }
 
-/* A raised button sinks into its shadow when pressed. */
+/* A pressable thing settles down a hair when pressed. */
 .press {
   transition:
-    transform 0.08s ease,
-    box-shadow 0.08s ease,
-    background-color 0.12s ease;
+    transform 0.1s ease,
+    background-color 0.14s ease,
+    border-color 0.14s ease;
 }
 .press:not(:disabled):active {
-  transform: translate(1px, 1px);
-  box-shadow: 0 0 0 0 rgb(var(--fg));
+  transform: translateY(1px);
 }
 
 input[type='number']::-webkit-inner-spin-button,
@@ -117,20 +133,21 @@ input[type='number']::-webkit-outer-spin-button {
   width: 8px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: rgb(var(--line));
+  background: rgb(var(--control));
+  border-radius: 999px;
 }
 .thin-scroll::-webkit-scrollbar-track {
   background: rgb(var(--panel2));
 }
 
-/* Toasts match the rest: square, bordered, hard shadow. */
+/* Toasts match the cards: one thin edge, a soft lift. */
 [data-sonner-toast] {
-  border: 1px solid rgb(var(--fg)) !important;
-  border-radius: 0 !important;
-  box-shadow: 3px 3px 0 0 rgb(var(--fg)) !important;
+  border: 1px solid rgb(var(--control)) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 12px 32px -12px rgb(var(--shadow) / 0.55) !important;
   background: rgb(var(--panel)) !important;
   color: rgb(var(--fg)) !important;
-  font-family: 'Archivo', sans-serif !important;
+  font-family: var(--font-sans) !important;
 }
 
 /* Settings > Notifications: "errors only" hides success toasts. */
@@ -161,6 +178,14 @@ html[data-motion='off'] *::after {
   animation: none !important;
   transition: none !important;
   scroll-behavior: auto !important;
+}
+
+/* The system "reduce motion" request stops pulses and spinners too, not only the Settings choice. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse,
+  .animate-spin {
+    animation: none !important;
+  }
 }
 
 /* Phones: 16px inputs stop iOS from zooming on focus. */
