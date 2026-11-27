@@ -1,19 +1,20 @@
 # Frontend
 
-React 18, Vite, TypeScript, Tailwind, wagmi v2 with ConnectKit (injected wallets), viem, TanStack Query, Lightweight Charts, lucide icons.
+React 18, Vite, TypeScript, Tailwind, wagmi v2 with ConnectKit (browser wallets) plus a Circle passkey wallet, viem, TanStack Query, Lightweight Charts, lucide icons.
 
 ## Pages
 
 | Page | Component | Contents |
 | --- | --- | --- |
-| Trade | `Terminal` | Network banner, token selector and pair stats, trade panel, chart, order tabs, collapsible testnet tools (testnet only) |
+| Trade | `Terminal` | Network banner, then two columns: on the left the market header (token selector, price, 24h change, volume, liquidity), chart and order tabs; on the right the trade panel (order types grouped as Market, Entry, Exit, Recurring) and the account box. Collapsible testnet tools on testnet only |
 | Dashboard | `Dashboard` | Account value, available and escrowed USDC, realized and unrealized PnL, balances (zero balances of untradable tokens hidden), every order, plan, fill and position, DCA performance |
-| Home | `Landing` | The landing page: hero with live facts (token count from the aggregator, keeper status) and an Agent demo labelled "Example session", an index of the seven order types, a who-does-what table, the Agent permission band, the routable token list, an owner can / cannot table, FAQ and a closing call. Every number on it is real or plainly labelled an illustration. A connected wallet skips this page and lands on Trade |
+| Home | `Landing` | The landing page, written to answer a visitor's questions in order: a hero where the real command parser reads a prompt at a live price beside a real chart, who it is for, trust (contract links, networks, token count read live, "no audit yet"), the problems in the trader's words, what you get (AI agent trading, advanced trading, dashboard), six steps from wallet to fill, what it costs (fee read live from the backend), an FAQ, and a closing call. Nothing on it is invented. A connected wallet skips this page and lands on Trade |
 | Agent | `AgentStation` | Command-driven trading with readback and one-time permission. See [agent-station.md](agent-station.md) |
 | Settings | `SettingsPage` | Look, display, trading, chart, notifications, shortcuts, agent, data and about. Own page (`/#/settings`), reached from the gear in the header or the bottom bar |
 | Admin | `Admin` | Owner only. See [admin-guide.md](admin-guide.md) |
+| Platform | `Platform` | Platform admin wallets only (`PLATFORM_ADMIN_ADDRESSES`). Wallet sign-in, volume, users, revenue and fee wallet balance, daily chart, activity, API keys and the chat model. See [platform-dashboard.md](platform-dashboard.md). The header link shows only for an admin wallet; the server checks every request |
 
-The layout follows the exchange-terminal pattern: a price header, chart and order form on top, then the orders table beside an account box. The look is retro / neo-brutalist; see [DESIGN.md](../DESIGN.md). The brand (name, tagline, social and legal links) lives in `src/brand.ts`; the logo is `Logo.tsx`.
+The layout follows the exchange-terminal pattern: a price header, chart and order form on top, then the orders table beside an account box. The look is a premium dark terminal; see [DESIGN.md](../DESIGN.md). The brand (name, tagline, social and legal links) lives in `src/brand.ts`; the logo is `Logo.tsx`.
 
 Pages are hash routes (`/#/trade`, `/#/agent`), so any page can be linked and the back button works. Page changes fade; landing sections reveal as they scroll into view. On phones a fixed bottom tab bar (`BottomNav`) carries Home (or Trade when connected), Trade, Dashboard, Agent and Settings. Motion obeys Settings and the system "reduce motion" request (`html[data-motion]`), and "off" removes every animation and transition.
 
@@ -40,7 +41,7 @@ On phones Settings is a list screen; choosing a row opens it with a back button.
 
 On phones the Trade page shows one pane at a time (Order, Chart, Orders, Account) under the pair header; from the `lg` breakpoint everything is visible and the trade panel is a right-hand column. The Agent page works the same way (Chat, Permission, Commands). A network with no tokens or contract (mainnet until it is configured) shows a single "Trading is not enabled" card instead of disabled panels. Only tokens with an oracle feed are offered for trading (`tradableBases`): on testnet that is tBTC, tETH and tSOL; EURC, cirBTC and WETH only appear in the portfolio when held.
 
-Token picker: on mainnet it lists every token the aggregator can route (about 60, loaded from `/api/tokens`, searchable by name, symbol or pasted address, with the contract address shown), so market swaps work for all of them. Tokens without a Coinbase market show the aggregator's price for a 10 USDC trade instead of a chart. Orders and DCA need an oracle feed on the contract and say so when a token has none.
+Token picker: on mainnet it lists every token the aggregator can route (about 60, loaded from `/api/tokens`, searchable by name, symbol or pasted address, with the contract address shown), so market swaps work for all of them. Each row says whether the token has a price feed for orders. Price, 24h change, volume, liquidity and candles for these tokens come from free DexScreener and GeckoTerminal data via the backend (`/market/token`, `/market/candles`, no keys); about two thirds of the list have a liquid pool. A token with no pool shows the aggregator's price for a 10 USDC trade and a "no chart data" note, never a made-up chart. Orders and DCA also need an oracle feed on the contract and say so when a token has none.
 
 **Admin** (`Admin`): a tab visible only to the contract owner. Contract controls (pause, minimum order, ownership transfer), fees, tokens/routers/timelocked changes and backend status. See [admin-guide.md](admin-guide.md).
 
@@ -86,7 +87,17 @@ All reads that touch many contracts use Multicall3. Query keys include the netwo
 
 ## Charts
 
-Real data only. Candles come from Coinbase Exchange (`BTC-USD`, `ETH-USD`, `EURC-USDC`), with a WebSocket ticker moving the latest candle. Coinbase lacks 4h and 1W granularity, so those are aggregated from 1h and 1D candles (weeks start Monday 00:00 UTC). If a request fails the chart shows an error and no candles. The footer always states the data is a reference price, not an Arc pool price. Indicators: volume, MA 20, EMA 50.
+Real data only. BTC, ETH and EURC use Coinbase Exchange candles (`BTC-USD`, `ETH-USD`, `EURC-USDC`) with a WebSocket ticker moving the latest candle. Every other mainnet token uses GeckoTerminal candles for its best DexScreener pool, through the backend cache (`src/trading/market.ts`). Coinbase has no 4h and 1W bars, so those are aggregated from 1h and 1D candles (weeks start Monday 00:00 UTC). If a request fails, or no pool exists, the chart says so and shows no candles. The footer states the source: a Coinbase reference price or a DEX pool price. Indicators: volume, MA 20, EMA 50.
+
+## Wallets
+
+The connect button opens `ConnectDialog` (`src/wallet/`). Browser wallets (MetaMask, Rabby, Coinbase Wallet, WalletConnect) go through ConnectKit as before. When `VITE_CIRCLE_CLIENT_KEY` is set, a **Passkey wallet** option appears: sign in or create an account with a fingerprint, Face ID or a security key. It is a Circle Modular Wallet, an ERC-4337 smart account whose owner is the passkey, so the private key stays in the device's secure hardware.
+
+- `circle.ts` loads the Circle SDK only when someone uses it, keeps the signed-in credential in `sessionStorage` (this tab only) and builds the smart account and bundler per chain.
+- `circleProvider.ts` is an EIP-1193 provider: a transaction becomes a user operation (sponsored by Circle Gas Station when `VITE_CIRCLE_SPONSOR_GAS` allows it), signing goes to the passkey, and reads go to the chain RPC. Its dependencies are injected, so it is unit tested without a browser (`tests/circle-wallet.test.ts`).
+- `circleConnector.ts` is the wagmi connector. Because the rest of the app talks to wagmi, every form, the Agent and the Dashboard work with a passkey account without changes.
+
+Things to know: the passkey account has its own address; every action asks for the fingerprint, so an order that needs an approval first asks twice; cancelling the prompt reads as a rejected request, not an error; a wrong Passkey Domain in the Circle Console gives a plain message. Setup: [api-keys.md](api-keys.md).
 
 ## Portfolio and PnL
 
@@ -101,7 +112,7 @@ Keeper fees per fill come from execution logs. Wallet swaps made elsewhere are n
 
 ## Design system
 
-Retro / neo-brutalist, written up in [DESIGN.md](../DESIGN.md): soft mist-blue paper and ink in light, blue-black and pale ink in dark; thin 1px ink borders, radius 0 (token images stay round), small hard offset shadows (`shadow-hard`, 2 to 6px) on pressable and featured elements only; a flat accent fill with ink text on it, never accent-coloured text; no gradients, glass, glow or background grids. Colours are CSS variables in `src/index.css` mapped to Tailwind tokens (`canvas`, `panel`, `raised`, `line`, `ink`, `mute`, `accent`, `up`, `down`, `warn`). Fonts: Archivo Black (headings), Archivo (text), IBM Plex Mono (numbers, `.num`). Green and red are used only for direction. Focus is a 2px ink outline. Motion respects `prefers-reduced-motion` and Settings.
+Premium dark fintech, written up in [DESIGN.md](../DESIGN.md): the logo's purple on a `#080711` background in dark (a pale lilac paper in light), 1px hairlines, 8 and 12px radii, flat accent fills with their own text colour, Archivo and IBM Plex Mono, no gradients or glow.
 
 ## Accessibility and responsiveness
 

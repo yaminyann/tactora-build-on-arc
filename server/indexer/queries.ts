@@ -129,3 +129,13 @@ export async function adminEventsFor(db: Db, q: { chainId: number; limit: number
 }
 
 export { ADMIN_EVENT_NAMES }
+
+/** Everything the platform dashboard counts, oldest first. Bounded so a huge history cannot exhaust memory. */
+export async function platformRows(db: Db, chainId: number, limit = 200_000) {
+  const ev = (await db`select name, owner, item_id, block_time, tx_hash, args from events where chain_id = ${chainId} and (name = 'OrderCreated' or name = 'OrderExecuted' or name = 'OrderCancelled' or name = 'OrderExpired' or name = 'DcaCreated' or name = 'DcaExecuted' or name = 'DcaCancelled' or name = 'DcaCompleted') order by block_number asc, log_index asc limit ${limit}`) as { name: string; owner: string | null; item_id: string | null; block_time: number; tx_hash: string; args: string }[]
+  const sw = (await db`select owner, tx_hash, sell_token, sell_amount, buy_token, buy_amount, block_time from swaps where chain_id = ${chainId} order by block_number asc limit ${limit}`) as { owner: string; tx_hash: string; sell_token: string; sell_amount: string; buy_token: string; buy_amount: string; block_time: number }[]
+  return {
+    events: ev.map((r) => ({ name: r.name, owner: r.owner, itemId: r.item_id, blockTime: r.block_time, txHash: r.tx_hash, args: JSON.parse(r.args) as Record<string, unknown> })),
+    swaps: sw.map((r) => ({ owner: r.owner, txHash: r.tx_hash, sellToken: r.sell_token, sellAmount: r.sell_amount, buyToken: r.buy_token, buyAmount: r.buy_amount, blockTime: r.block_time })),
+  }
+}

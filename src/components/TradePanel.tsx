@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { clsx } from 'clsx'
 import { useAccount } from 'wagmi'
 import type { NetworkConfig, TokenInfo } from '@/trading/networks'
 import type { OracleState } from '@/trading/hooks'
@@ -24,6 +25,20 @@ const KINDS: { id: Kind; label: string; sellOnly?: boolean; buyOnly?: boolean }[
   { id: 'dca', label: 'DCA', buyOnly: true },
 ]
 
+type Group = 'market' | 'limit' | 'stop' | 'dca'
+
+function kindGroup(k: Kind): Group {
+  return k === 'market' ? 'market' : k === 'limit' ? 'limit' : k === 'dca' ? 'dca' : 'stop'
+}
+
+/** The four top-level tabs. Everything that sells at a trigger sits under "Stops". */
+const GROUPS: { id: Group; label: string; first: Kind }[] = [
+  { id: 'market', label: 'Market', first: 'market' },
+  { id: 'limit', label: 'Limit', first: 'limit' },
+  { id: 'stop', label: 'Stops', first: 'stop_loss' },
+  { id: 'dca', label: 'DCA', first: 'dca' },
+]
+
 export function TradePanel({ network, base, oracle }: { network: NetworkConfig; base: TokenInfo | undefined; oracle: OracleState | undefined }) {
   const { address } = useAccount()
   const { slippageBps, expiryDays, defaultOrderType } = useSettings()
@@ -31,6 +46,7 @@ export function TradePanel({ network, base, oracle }: { network: NetworkConfig; 
   const [pickedSide, setSide] = useState<number>(Side.BUY)
   const [kind, setKind] = useState<Kind>(defaultOrderType)
   const current = KINDS.find((k) => k.id === kind)!
+  const group = kindGroup(kind)
   // The order type can force a side (stops are sell-only, DCA is buy-only).
   const side = current.sellOnly ? Side.SELL : current.buyOnly ? Side.BUY : pickedSide
 
@@ -54,31 +70,47 @@ export function TradePanel({ network, base, oracle }: { network: NetworkConfig; 
 
   return (
     <Panel className="p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-xl">Trade</h2>
-        <Segmented
-          value={side}
-          onChange={setSide}
-          tone={(v) => (v === Side.BUY ? 'text-up' : 'text-down')}
-          options={[
-            { id: Side.BUY, label: 'Buy', disabled: current.sellOnly },
-            { id: Side.SELL, label: 'Sell', disabled: current.buyOnly },
-          ]}
-        />
-      </div>
+      {/* Buy and Sell lead: they decide everything below. Stops and DCA force a side, so the other button is disabled. */}
+      <Segmented
+        className="mb-3 w-full"
+        value={side}
+        onChange={setSide}
+        tone={(v) => (v === Side.BUY ? 'text-up' : 'text-down')}
+        options={[
+          { id: Side.BUY, label: `Buy ${base?.symbol ?? ''}`.trim(), disabled: current.sellOnly },
+          { id: Side.SELL, label: `Sell ${base?.symbol ?? ''}`.trim(), disabled: current.buyOnly },
+        ]}
+      />
 
-      <div className="mb-3 flex flex-wrap gap-1" role="tablist" aria-label="Order type">
-        {KINDS.map((k) => (
-          <button
-            key={k.id}
-            role="tab"
-            aria-selected={k.id === kind}
-            onClick={() => setKind(k.id)}
-            className={`min-h-[40px] whitespace-nowrap border px-3 text-xs font-bold ${k.id === kind ? 'border-line bg-accent text-accent-ink' : 'border-line/30 hover:border-line hover:bg-raised'}`}
-          >
-            {k.label}
-          </button>
-        ))}
+      <div className="mb-3 space-y-2">
+        <div className="grid grid-cols-4 border border-line" role="tablist" aria-label="Order type">
+          {GROUPS.map((g, i) => (
+            <button
+              key={g.id}
+              role="tab"
+              aria-selected={g.id === group}
+              onClick={() => setKind(g.first)}
+              className={clsx('min-h-[40px] text-xs font-bold', i > 0 && 'border-l border-line', g.id === group ? 'bg-accent text-accent-ink' : 'bg-panel hover:bg-raised')}
+            >
+              {g.label}
+            </button>
+          ))}
+        </div>
+        {group === 'stop' && (
+          <div className="flex flex-wrap gap-1" role="tablist" aria-label="Stop order type">
+            {KINDS.filter((k) => kindGroup(k.id) === 'stop').map((k) => (
+              <button
+                key={k.id}
+                role="tab"
+                aria-selected={k.id === kind}
+                onClick={() => setKind(k.id)}
+                className={clsx('min-h-[36px] border px-2.5 text-xs font-bold', k.id === kind ? 'border-line bg-raised' : 'border-line/30 hover:border-line hover:bg-raised')}
+              >
+                {k.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {!ctx ? (

@@ -4,6 +4,7 @@
  * Nothing here is generated locally: if a request fails the caller gets an error.
  */
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 export type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1D' | '1W'
 
@@ -129,6 +130,19 @@ export function ema(candles: Candle[], period: number): { time: number; value: n
   return out.slice(period - 1)
 }
 
+/** Where a pool price comes from: the deepest DEX pool for a token the aggregator can route. */
+export interface PoolInfo {
+  dex: string
+  pair: string
+  symbol: string
+  quoteSymbol: string
+  priceUsd: number
+  change24hPct: number | null
+  volume24hUsd: number
+  liquidityUsd: number
+  url: string | null
+}
+
 export interface MarketState {
   candles: Candle[]
   last: number | null
@@ -136,9 +150,14 @@ export interface MarketState {
   loading: boolean
   error: string | null
   live: boolean
+  /** 'cex' is a Coinbase reference price; 'dex' is a real Arc pool. */
+  kind: 'cex' | 'dex' | null
+  pool: PoolInfo | null
+  /** The pool answered that the token has no pool with liquidity. */
+  noPool: boolean
 }
 
-const EMPTY: MarketState = { candles: [], last: null, stats: null, loading: false, error: null, live: false }
+const EMPTY: MarketState = { candles: [], last: null, stats: null, loading: false, error: null, live: false, kind: null, pool: null, noPool: false }
 
 /** Loads history, then keeps the newest candle moving with the live ticker. */
 export function useMarket(product: string | undefined, tf: Timeframe): MarketState {
@@ -159,7 +178,7 @@ export function useMarket(product: string | undefined, tf: Timeframe): MarketSta
         if (ctl.cancelled) return
         candlesRef.current = candles
         const lastCandle = candles[candles.length - 1]
-        setLoaded({ key: k, state: { candles, last: lastCandle ? lastCandle.close : stats.last, stats, loading: false, error: null, live: false } })
+        setLoaded({ key: k, state: { ...EMPTY, kind: 'cex', candles, last: lastCandle ? lastCandle.close : stats.last, stats } })
         ws = new WebSocket(WS)
         ws.onopen = () => ws?.send(JSON.stringify({ type: 'subscribe', product_ids: [product], channels: ['ticker'] }))
         ws.onmessage = (ev) => {
@@ -184,7 +203,7 @@ export function useMarket(product: string | undefined, tf: Timeframe): MarketSta
         }
       })
       .catch((e: unknown) => {
-        if (!ctl.cancelled) setLoaded({ key: k, state: { ...EMPTY, error: e instanceof Error ? e.message : 'Market data unavailable' } })
+        if (!ctl.cancelled) setLoaded({ key: k, state: { ...EMPTY, kind: 'cex', error: e instanceof Error ? e.message : 'Market data unavailable' } })
       })
 
     return () => {
@@ -195,6 +214,65 @@ export function useMarket(product: string | undefined, tf: Timeframe): MarketSta
   }, [product, tf])
 
   if (!product) return EMPTY
-  if (loaded.key !== key) return { ...EMPTY, loading: true }
+  if (loaded.key !== key) return { ...EMPTY, kind: 'cex', loading: true }
   return loaded.state
+}
+
+interface DexCandlesResponse {
+  market: (PoolInfo & { token: string }) | null
+  candles?: Candle[]
+  stale?: boolean
+  reason?: string
+  error?: { message?: string }
+}
+
+/** Chart decimals that keep small prices readable: 0.0001462 must not render as 0.00. */
+export function priceDecimals(price: number | null): number {
+  if (price === null || !(price > 0)) return 2
+  if (price >= 1000) return 2
+  if (price >= 1) return 4
+  if (price >= 0.01) return 5
+  if (price >= 0.0001) return 7
+  return 9
+}
+
+/**
+ * Pool data for any token without a Coinbase market: price, 24h numbers and candles from the token's deepest pool
+ * on the chain, through the backend (DexScreener and GeckoTerminal, free, cached). It polls, because the sources
+ * have no push feed. Disabled for tokens that already have a Coinbase reference.
+ */
+export function useDexMarket(chainId: number, token: string | undefined, tf: Timeframe, enabled: boolean): MarketState {
+  const q = useQuery({
+    queryKey: ['dex-market', chainId, token?.toLowerCase(), tf],
+    enabled: enabled && Boolean(token),
+    refetchInterval: tf === '1m' || tf === '5m' ? 20_000 : 45_000,
+    staleTime: 10_000,
+    retry: 1,
+    queryFn: async (): Promise<DexCandlesResponse> => {
+      const res = await fetch(`/api/market/candles?chainId=${chainId}&token=${token}&tf=${tf}`)
+      const body = (await res.json().catch(() => ({}))) as DexCandlesResponse
+      if (!res.ok) throw new Error(body.error?.message ?? 'Chart data is temporarily unavailable')
+      return body
+    },
+  })
+  if (!enabled || !token) return EMPTY
+  if (q.isLoading) return { ...EMPTY, kind: 'dex', loading: true }
+  if (q.isError && !q.data) return { ...EMPTY, kind: 'dex', error: q.error instanceof Error ? q.error.message : 'Chart data is temporarily unavailable' }
+  const d = q.data
+  if (!d || !d.market) return { ...EMPTY, kind: 'dex', noPool: true }
+  const candles = d.candles ?? []
+  const last = d.market.priceUsd
+  // The time of the last fetch stands in for "now", which keeps this render pure.
+  const dayAgo = q.dataUpdatedAt / 1000 - 86_400
+  const recent = candles.filter((c) => c.time >= dayAgo)
+  const window = recent.length ? recent : candles
+  const stats: Stats = {
+    open: last / (1 + (d.market.change24hPct ?? 0) / 100),
+    high: window.length ? Math.max(...window.map((c) => c.high), last) : last,
+    low: window.length ? Math.min(...window.map((c) => c.low), last) : last,
+    last,
+    volume: d.market.volume24hUsd,
+    changePct: (d.market.change24hPct ?? 0) / 100,
+  }
+  return { candles, last, stats, loading: false, error: null, live: !d.stale, kind: 'dex', pool: d.market, noPool: false }
 }

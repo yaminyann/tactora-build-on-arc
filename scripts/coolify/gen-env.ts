@@ -40,6 +40,7 @@ if (existsSync(out) && !flag('--force')) {
 }
 
 const adminToken = randomBytes(32).toString('hex')
+const secretsKey = randomBytes(32).toString('hex')
 let keeperKey = ''
 let keeperAddress = ''
 if (flag('--new-keeper-key')) {
@@ -52,12 +53,18 @@ const keeperNote = keeperKey
   ? `# Keeper wallet address (fund it with a little USDC for gas): ${keeperAddress}\n`
   : '# Use a DEDICATED low-balance wallet. Never reuse the contract owner key.\n'
 
-const lines = `# Arc Terminal - Coolify environment (${mainnet ? 'MAINNET' : 'TESTNET'}). Generated ${new Date().toISOString()}.
+const lines = `# Tactora - Coolify environment (${mainnet ? 'MAINNET' : 'TESTNET'}). Generated ${new Date().toISOString()}.
 # Contains secrets. Paste into Coolify -> Environment Variables -> Developer view. Never commit or share it.
 
 # ---- Required ----------------------------------------------------------------------------------
 # Bearer token for /metrics and the admin page's backend status. Keep it secret.
 ADMIN_TOKEN=${adminToken}
+
+# Wallets that may sign in to the Platform dashboard (statistics, users, API keys). Comma-separated. Use a wallet you
+# keep offline or on a hardware device. The ADMIN_TOKEN above stays as the break-glass key.
+PLATFORM_ADMIN_ADDRESSES=${carry('PLATFORM_ADMIN_ADDRESSES')}
+# Encrypts API keys saved from the Platform dashboard. Keep a copy: if it is lost, saved keys must be entered again.
+SECRETS_ENCRYPTION_KEY=${secretsKey}
 
 # ---- Network -----------------------------------------------------------------------------------
 # Which network the app opens on, and which one the keeper and indexer watch.
@@ -92,7 +99,7 @@ KEEPER_INTERVAL_MS=5000
 # ---- Platform fee on market swaps -----------------------------------------------------------------
 # 30 = 0.30% of the sell amount, paid by the aggregator to the recipient inside the swap. 0 = off. Max 100.
 PLATFORM_FEE_BPS=0
-PLATFORM_FEE_RECIPIENT=
+PLATFORM_FEE_RECIPIENT=${carry('PLATFORM_FEE_RECIPIENT')}
 
 # ---- Quote providers --------------------------------------------------------------------------------
 GATEWAY_PROVIDERS=0x,kyber,test-router,test-router-b
@@ -121,6 +128,7 @@ mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, lines, { mode: 0o600 })
 console.log(`Wrote ${out}`)
 console.log(`  ADMIN_TOKEN        generated (${adminToken.length} chars)`)
+console.log(`  SECRETS_ENCRYPTION_KEY generated (${secretsKey.length} chars)`)
 if (keeperAddress) console.log(`  KEEPER wallet      ${keeperAddress}  <- fund this address with USDC for gas`)
 else console.log('  KEEPER_PRIVATE_KEY empty: set it, or re-run with --new-keeper-key')
 console.log(`Next: bun run scripts/coolify/preflight.ts ${out}`)

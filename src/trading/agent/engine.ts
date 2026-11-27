@@ -36,6 +36,8 @@ export interface Plan {
   warnings: string[]
   /** Size in USDC for the permission limits, or null when it cannot be priced. */
   valueUsdc: number | null
+  /** Risk-reducing sell order (stop, take-profit, trailing, OCO): exempt from the spending limits, always asks for a yes. */
+  protective?: boolean
   builtAt: number
   run: (progress: (message: string) => void) => Promise<RunResult>
 }
@@ -324,6 +326,7 @@ export function useAgentEngine(network: NetworkConfig) {
           ],
           warnings: [...warnings, 'Your funds are escrowed in the order contract until it fills, you cancel, or it expires. You can cancel at any time.'],
           valueUsdc: usdcNumber(valueQuote, q.decimals),
+          protective: intent.kind !== 'limit',
           builtAt: Date.now(),
           run: async (progress) => {
             const hashes: Hex[] = []

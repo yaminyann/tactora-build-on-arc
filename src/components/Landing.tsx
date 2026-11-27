@@ -1,427 +1,588 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { AnimatePresence, motion } from 'framer-motion'
 import { clsx } from 'clsx'
+import { Check, ExternalLink } from 'lucide-react'
 import { BRAND } from '@/brand'
-import { fetchTokenList } from '@/trading/tokens'
+import { buildAddressExplorerUrl } from '@/onchain-facts'
+import { NETWORKS } from '@/trading/networks'
 import { useSettings } from '@/trading/settings'
+import { useTokenList } from '@/trading/tokens'
 import { setAgentPrefill } from '@/trading/agent/prefill'
+import { parseCommand } from '@/trading/agent/parser'
+import { interpretChat, type ChatContext } from '@/trading/agent/chat'
+import { describeIntent } from '@/trading/agent/summary'
+import { fetchCandles, fetchStats } from '@/trading/market'
+import { fmtUsd, shortAddr } from '@/trading/format'
+import { useBackendHealth } from '@/trading/hooks'
 import { Reveal } from './motion'
-import { TokenBase } from './TokenIcon'
-import { Skeleton } from './ui'
 
-// ---------- shared pieces ----------
+/*
+ * The page answers a visitor's questions in the order they ask them:
+ *   1 Is this for me?  2 Can I trust you?  3 Do you get my problem?  4 What do I get?  5 How does it work?
+ *   6 How much?  7 What if it goes wrong?
+ * Everything on it is live or a plain statement about how the product works. The only numbers are read from the chain
+ * config, the backend or a public market feed. No user counts, volume, partners, testimonials or audit claims.
+ * The hero and the Agent section run the real command parser and chat rules in the browser; nothing is sent anywhere.
+ */
 
-function Heading({ kicker, children }: { kicker: string; children: ReactNode }) {
+const wrap = 'mx-auto w-full max-w-[1200px]'
+
+function SectionHead({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="mb-8 max-w-3xl">
-      <p className="mb-2 inline-block border border-line bg-accent px-2 py-0.5 font-mono text-xs font-semibold text-accent-ink">{kicker}</p>
-      <h2 className="text-3xl leading-tight sm:text-5xl">{children}</h2>
+    <div className="mb-10 max-w-2xl sm:mb-14">
+      <h2 className="min-w-0 break-words text-4xl leading-[1.08] sm:text-5xl">{title}</h2>
+      {children && <p className="mt-4 text-base text-mute sm:text-lg">{children}</p>}
     </div>
   )
 }
 
-function Cta({ children, onClick, variant = 'primary' }: { children: ReactNode; onClick: () => void; variant?: 'primary' | 'ghost' }) {
-  return (
-    <button onClick={onClick} className={clsx('press min-h-[52px] border border-line px-6 text-base font-bold shadow-hard', variant === 'primary' ? 'bg-accent text-accent-ink' : 'bg-panel hover:bg-raised')}>
-      {children}
-    </button>
-  )
+// ---------- live data the page reads ----------
+
+/** The ETH reference price, so the sample prompts and their proposals use a real level, not an invented one. */
+function useEthPrice() {
+  return useQuery({ queryKey: ['landing-stats', 'ETH-USD'], queryFn: () => fetchStats('ETH-USD'), refetchInterval: 60_000, staleTime: 30_000, retry: 1 })
 }
 
-// ---------- the scripted agent session shown in the hero ----------
+// ---------- the chart (real candles, drawn as one line) ----------
 
-interface Script {
-  id: string
-  feature: string
-  command: string
-  lines: [string, string][]
-  result: string
-}
-
-/** Amounts here are illustrative; the window is labelled as an example session. */
-const SCRIPTS: Script[] = [
-  { id: 'swap', feature: 'DEX swap', command: 'buy 10 USDC of tBTC', lines: [['Action', 'Market buy tBTC'], ['You spend', '10 USDC'], ['Route', 'Best of the quoted routes'], ['Max slippage', '0.50%']], result: 'Swap sent through the best quoted route. The router enforces your minimum output.' },
-  { id: 'limit', feature: 'Limit order', command: 'limit buy tBTC 25 USDC at 70000', lines: [['Action', 'Limit buy tBTC'], ['Escrowed now', '25 USDC'], ['Buys at or below', '70,000 USDC'], ['Expires', '7 days']], result: 'Order created. A keeper fills it when the oracle price reaches your level.' },
-  { id: 'sl', feature: 'Stop-loss', command: 'stop loss 0.5 tBTC at 80000', lines: [['Action', 'Stop-loss sell tBTC'], ['Escrowed now', '0.5 tBTC'], ['Sells when price falls to', '80,000 USDC'], ['Max slippage', '0.50%']], result: 'Order created. It runs when a keeper submits it, even with this tab closed.' },
-  { id: 'tp', feature: 'Take-profit', command: 'take profit 0.5 tBTC at 100000', lines: [['Action', 'Take-profit sell tBTC'], ['Escrowed now', '0.5 tBTC'], ['Sells when price rises to', '100,000 USDC'], ['Expires', '7 days']], result: 'Order created. Cancel it any time to get the escrow back.' },
-  { id: 'trail', feature: 'Trailing stop', command: 'trailing stop 0.5 tBTC 5%', lines: [['Action', 'Trailing stop sell tBTC'], ['Escrowed now', '0.5 tBTC'], ['Trails the peak by', '5%'], ['Needs', 'A keeper to record new highs']], result: 'Order created. The stop follows the highest price a keeper has recorded.' },
-  { id: 'oco', feature: 'OCO', command: 'oco 0.5 tBTC sl 80000 tp 100000', lines: [['Action', 'OCO sell tBTC'], ['Escrowed now', '0.5 tBTC'], ['Stop-loss at', '80,000 USDC'], ['Take-profit at', '100,000 USDC']], result: 'One escrow, two exits. Whichever price is hit first runs and the other never can.' },
-  { id: 'dca', feature: 'DCA', command: 'dca 5 USDC into tBTC daily for 30 days', lines: [['Action', 'Recurring buy of tBTC'], ['Per buy', '5 USDC'], ['Number of buys', '30'], ['Budget escrowed now', '150 USDC']], result: 'Plan created. Pause, resume, or cancel and take back what is left.' },
-]
-
-type Step = 'typing' | 'readback' | 'yes' | 'done'
-
-function AgentDemo({ index, onIndex }: { index: number; onIndex: (i: number) => void }) {
-  const { animate } = useSettings()
-  const script = SCRIPTS[index]
-  // The parent gives this component a new key per script, so each run starts from a clean state.
-  const [typed, setTyped] = useState(animate ? 0 : script.command.length)
-  const [step, setStep] = useState<Step>(animate ? 'typing' : 'done')
-  const [paused, setPaused] = useState(false)
-  const running = animate && !paused
-  const advance = useRef(onIndex)
-  useEffect(() => {
-    advance.current = onIndex
-  })
-
-  // Types the command, then reads the plan back, says yes, and shows the result.
-  useEffect(() => {
-    if (!animate) return
-    const timers: ReturnType<typeof setTimeout>[] = []
-    const at = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms))
-    const typeEnd = 500 + script.command.length * 45
-    for (let i = 1; i <= script.command.length; i++) at(500 + i * 45, () => setTyped(i))
-    at(typeEnd + 400, () => setStep('readback'))
-    at(typeEnd + 2300, () => setStep('yes'))
-    at(typeEnd + 3000, () => setStep('done'))
-    return () => timers.forEach(clearTimeout)
-  }, [animate, script])
-
-  // After the result has been on screen for a moment, move to the next example unless paused.
-  useEffect(() => {
-    if (step !== 'done' || !running) return
-    const t = setTimeout(() => advance.current((index + 1) % SCRIPTS.length), 3200)
-    return () => clearTimeout(t)
-  }, [step, running, index])
-
+function PriceLine({ product, label }: { product: string; label: string }) {
+  const q = useQuery({ queryKey: ['landing-candles', product], queryFn: () => fetchCandles(product, '1h', 1), refetchInterval: 120_000, staleTime: 60_000, retry: 1 })
+  const stats = useQuery({ queryKey: ['landing-stats', product], queryFn: () => fetchStats(product), refetchInterval: 60_000, staleTime: 30_000, retry: 1 })
+  const points = useMemo(() => (q.data ?? []).slice(-168).map((c) => c.close), [q.data])
+  const W = 600
+  const H = 140
+  const pad = 6
+  if (q.isLoading) return <div className="h-[140px] animate-pulse rounded-lg bg-raised motion-reduce:animate-none" aria-label="Loading chart" />
+  if (q.isError || points.length < 2) return <p className="grid h-[140px] place-items-center rounded-lg bg-raised text-xs text-mute">Chart data is unavailable right now.</p>
+  const lo = Math.min(...points)
+  const hi = Math.max(...points)
+  const span = hi - lo || 1
+  const xy = points.map((p, i) => [pad + (i / (points.length - 1)) * (W - pad * 2), pad + (1 - (p - lo) / span) * (H - pad * 2)] as const)
+  const line = xy.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+  const area = `${line} L${xy[xy.length - 1][0].toFixed(1)} ${H} L${xy[0][0].toFixed(1)} ${H} Z`
+  const up = points[points.length - 1] >= points[0]
   return (
-    <div className="border border-line bg-panel shadow-hard-lg" role="group" aria-label="Example agent session">
-      <div className="flex items-center justify-between gap-2 border-b border-line bg-accent px-3 py-2 text-accent-ink">
-        <span className="font-display text-base">Agent</span>
-        <span className="flex items-center gap-2">
-          <span className="font-mono text-[11px] font-semibold">Example session</span>
-          {animate && (
-            <button onClick={() => setPaused((p) => !p)} aria-pressed={paused} className="min-h-[32px] border border-line bg-panel px-2 font-mono text-[11px] font-semibold text-ink hover:bg-raised">
-              {paused ? 'Play' : 'Pause'}
-            </button>
-          )}
-        </span>
-      </div>
-      <div className="min-h-[380px] space-y-3 p-3 sm:p-4" aria-live="polite">
-        <div className="flex justify-end">
-          <div className="max-w-[90%] border border-line bg-ink px-3 py-2 font-mono text-sm text-canvas">
-            {script.command.slice(0, typed)}
-            {step === 'typing' && running && <span className="ml-0.5 inline-block h-4 w-[3px] translate-y-0.5 bg-canvas" />}
-          </div>
-        </div>
-        <AnimatePresence initial={false}>
-          {step !== 'typing' && (
-            <motion.div key={`${script.id}-card`} initial={animate ? { opacity: 0, y: 8 } : false} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }} className="max-w-[96%] border border-line bg-raised p-3">
-              <p className="text-sm font-bold">Is this exactly what you want?</p>
-              <div className="mt-2 border border-line bg-panel px-3">
-                {script.lines.map(([k, v]) => (
-                  <div key={k} className="flex justify-between gap-3 border-b border-line/40 py-1.5 text-xs last:border-b-0">
-                    <span className="text-mute">{k}</span>
-                    <span className="num text-right font-semibold">{v}</span>
-                  </div>
-                ))}
-              </div>
-              {step === 'readback' && (
-                <div className="mt-3 flex gap-2 text-xs font-bold">
-                  <span className="flex-1 border border-line bg-accent py-2 text-center text-accent-ink shadow-hard-sm">Yes, run it</span>
-                  <span className="flex-1 border border-line bg-panel py-2 text-center">Cancel</span>
-                </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-        {(step === 'yes' || step === 'done') && (
-          <div className="flex justify-end">
-            <div className="border border-line bg-ink px-3 py-2 font-mono text-sm text-canvas">yes</div>
-          </div>
+    <figure>
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <figcaption className="text-xs text-mute">{label}, last 7 days</figcaption>
+        {stats.data && (
+          <span className="num text-sm font-semibold">
+            {fmtUsd(stats.data.last, stats.data.last < 10 ? 4 : 2)}{' '}
+            <span className={clsx('text-xs', stats.data.changePct >= 0 ? 'text-up' : 'text-down')}>
+              {stats.data.changePct >= 0 ? '+' : ''}
+              {(stats.data.changePct * 100).toFixed(2)}% today
+            </span>
+          </span>
         )}
-        {step === 'done' && <p className="max-w-[96%] border border-line bg-up px-3 py-2 text-sm font-semibold text-canvas">{script.result}</p>}
       </div>
-      <p className="border-t border-line px-3 py-2 text-[11px] text-mute">Amounts are illustrative. The real agent builds each plan from your balance, the oracle price and a live quote.</p>
-    </div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-[140px] w-full" role="img" aria-label={`${label} hourly closing price for the last 7 days, from ${fmtUsd(points[0])} to ${fmtUsd(points[points.length - 1])}`} preserveAspectRatio="none">
+        <path d={area} className={up ? 'fill-up/10' : 'fill-down/10'} />
+        <path d={line} fill="none" strokeWidth="1.75" vectorEffect="non-scaling-stroke" className={up ? 'stroke-up' : 'stroke-down'} />
+      </svg>
+      <p className="mt-1 text-[11px] text-mute">Reference price from Coinbase Exchange, not an Arc pool price.</p>
+    </figure>
   )
 }
 
-// ---------- hero ----------
+// ---------- the agent demo (real parser, real chat rules) ----------
 
-function Hero({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
-  const [index, setIndex] = useState(0)
-  const tokens = useQuery({ queryKey: ['landing-tokens'], queryFn: () => fetchTokenList(5042), staleTime: 10 * 60_000, retry: 1 })
-  const count = tokens.data ? Math.max(0, tokens.data.length - 1) : null
-  const facts: { value: string; label: string }[] = [
-    { value: count === null ? (tokens.isError ? 'n/a' : '...') : String(count), label: 'tokens the aggregator can route on Arc' },
-    { value: '6 + DCA', label: 'order types in one escrow contract' },
-    { value: '0.10%', label: 'highest keeper fee, and it can only go down' },
-    { value: 'No custody', label: 'orders sit in a contract you can always exit' },
-  ]
+const TOKENS = [
+  { symbol: 'ETH', name: 'Ether' },
+  { symbol: 'BTC', name: 'Bitcoin' },
+]
+const SAMPLES = ['Buy $100 worth of ETH when the price drops 5%', 'DCA $500 into ETH over the next 7 days', 'Create an OCO order for ETH']
 
+type Reading = { kind: 'proposal'; command: string; label: string; fields: [string, string][]; note?: string } | { kind: 'ask'; text: string } | { kind: 'error'; text: string }
+
+function read(text: string, ethPrice: number | null): Reading | null {
+  const t = text.trim()
+  if (!t) return null
+  const strict = parseCommand(t)
+  let command = t
+  let note: string | undefined
+  let parsed = strict
+  if (!strict.ok) {
+    const ctx: ChatContext = { tokens: TOKENS, quote: 'USDC', connected: false, holdings: [], prices: ethPrice ? { ETH: ethPrice } : {}, freeQuote: 0, protectedSymbols: [], activeDca: 0 }
+    const chat = interpretChat(t, ctx)
+    if (chat.kind === 'reply') return { kind: 'ask', text: chat.text }
+    if (chat.kind !== 'command') return { kind: 'error', text: `${strict.error}${strict.example ? ` Example: ${strict.example}` : ''}` }
+    command = chat.command
+    note = chat.note.replace(/^I read that as: [^.]*\.?\s*/, '') || undefined
+    parsed = parseCommand(chat.command)
+  }
+  if (!parsed.ok) return { kind: 'error', text: parsed.error }
+  const view = describeIntent(parsed.intent, TOKENS.map((x) => x.symbol))
+  if (!view) return { kind: 'error', text: 'That is a lookup, not a trade. Try describing an order.' }
+  return { kind: 'proposal', command, label: view.label, fields: view.fields, note }
+}
+
+function AgentDemo({ onOpenAgent, bare }: { onOpenAgent: (text: string) => void; bare?: boolean }) {
+  const eth = useEthPrice()
+  const price = eth.data?.last ?? null
+  const [text, setText] = useState(SAMPLES[0])
+  const reading = useMemo(() => read(text, price), [text, price])
   return (
-    <section className="pb-10 pt-4 sm:pt-8">
-      <div className="grid items-start gap-8 lg:grid-cols-[1.02fr_1fr] lg:gap-10">
-        <div>
-          <h1 className="text-[2.6rem] leading-[1.02] sm:text-6xl lg:text-[4.4rem]">
-            Swaps, stops and DCA on Arc.
-          </h1>
-          <p className="mt-5 max-w-xl text-base sm:text-lg">
-            Swap through the best aggregator route. Set limit, stop-loss, take-profit, trailing and OCO orders that keep running while your browser is closed. Schedule DCA buys. Or type the command and let the agent prepare it.
-          </p>
-          <div className="mt-7 flex flex-wrap gap-3">
-            <Cta onClick={onTrade}>Open the terminal</Cta>
-            <Cta onClick={onAgent} variant="ghost">
-              Try the agent
-            </Cta>
-          </div>
-
-          <p className="mb-2 mt-9 text-sm font-bold">What the agent runs. Pick one to watch it.</p>
-          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {SCRIPTS.map((s, i) => (
-              <li key={s.id}>
-                <button
-                  onClick={() => setIndex(i)}
-                  aria-pressed={index === i}
-                  className={clsx('press min-h-[44px] w-full border border-line px-3 text-left text-sm font-bold shadow-hard-sm', index === i ? 'bg-accent text-accent-ink' : 'bg-panel hover:bg-raised')}
-                >
-                  {s.feature}
-                </button>
-              </li>
-            ))}
-            <li>
-              <button onClick={onAgent} className="press min-h-[44px] w-full border border-line bg-ink px-3 text-left text-sm font-bold text-canvas shadow-hard-sm">
-                Cancel, pause, resume
+    <div className={clsx(!bare && 'rounded-2xl border border-line bg-panel shadow-hard-lg')}>
+      <div className="p-4 sm:p-5">
+        <label htmlFor={`demo-prompt-${bare ? 'hero' : 'section'}`} className="mb-2 block text-sm font-semibold">
+          Tell the agent what you want
+        </label>
+        <textarea
+          id={`demo-prompt-${bare ? 'hero' : 'section'}`}
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          className="w-full resize-none rounded-xl border border-control bg-raised px-3.5 py-3 text-[15px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[rgb(var(--ring))]"
+        />
+        <ul className="mt-2 flex flex-wrap gap-2" aria-label="Examples">
+          {SAMPLES.map((s) => (
+            <li key={s}>
+              <button type="button" onClick={() => setText(s)} className={clsx('min-h-[36px] rounded-lg border px-2.5 text-xs', text === s ? 'border-accent text-ink' : 'border-line text-mute hover:text-ink')}>
+                {s.length > 28 ? `${s.slice(0, 26)}...` : s}
               </button>
             </li>
-          </ul>
-        </div>
-        <AgentDemo key={index} index={index} onIndex={setIndex} />
+          ))}
+        </ul>
       </div>
 
-      <dl className="mt-10 grid border border-line bg-panel sm:grid-cols-2 lg:grid-cols-4">
-        {facts.map((f, i) => (
-          <div key={f.label} className={clsx('p-4', i > 0 && 'border-t border-line sm:border-t-0 sm:border-l', i === 2 && 'sm:border-t sm:border-l-0 lg:border-t-0 lg:border-l')}>
-            <dt className="order-2 mt-1 text-xs text-mute">{f.label}</dt>
-            <dd className="num font-display text-3xl leading-none sm:text-4xl">{f.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </section>
-  )
-}
-
-// ---------- what it does: an index, not a card grid ----------
-
-const FEATURES: { name: string; body: string; command: string }[] = [
-  { name: 'Market swap', body: 'Quotes from every configured aggregator are ranked by guaranteed output after gas. A provider that fails is skipped for a while.', command: 'buy 10 USDC of tBTC' },
-  { name: 'Limit order', body: 'Escrow USDC or the token. A keeper fills the order when the oracle price reaches your level.', command: 'limit buy tBTC 5 USDC at 70000' },
-  { name: 'Stop-loss', body: 'Sells when the price falls to your stop. It follows the contract oracle, which can lag the market.', command: 'stop loss 0.001 tBTC at 80000' },
-  { name: 'Take-profit', body: 'Sells when the price rises to your target. A triggered order is not guaranteed to fill.', command: 'take profit 0.001 tBTC at 100000' },
-  { name: 'Trailing stop', body: 'The stop follows the highest price by a percentage you choose. A keeper has to record each new high.', command: 'trailing stop 0.001 tBTC 5%' },
-  { name: 'OCO', body: 'One escrow, two exits. Whichever price is hit first runs, and the other can never run.', command: 'oco 0.001 tBTC sl 80000 tp 100000' },
-  { name: 'DCA', body: 'Escrow a budget and buy a fixed amount every hour, day, week or month, with an optional price cap. Pause, resume, or cancel and take back the rest.', command: 'dca 1 USDC into tBTC daily for 7 days' },
-]
-
-function FeatureIndex({ onTry }: { onTry: (command: string) => void }) {
-  return (
-    <section className="py-10 sm:py-14">
-      <Heading kicker="What it does">Seven ways to trade, one way to ask.</Heading>
-      <ol className="border-t border-line">
-        {FEATURES.map((f, i) => (
-          <li key={f.name}>
-            <Reveal>
-              <div className="grid items-center gap-x-6 gap-y-2 border-b border-line py-5 sm:grid-cols-[64px_220px_minmax(0,1fr)_auto]">
-                <span className="num font-display text-3xl">{String(i + 1).padStart(2, '0')}</span>
-                <h3 className="text-2xl">{f.name}</h3>
-                <div>
-                  <p className="text-sm text-mute">{f.body}</p>
-                  <code className="num mt-2 inline-block border border-line bg-raised px-2 py-1 text-xs">{f.command}</code>
-                </div>
-                <button onClick={() => onTry(f.command)} className="press min-h-[44px] justify-self-start border border-line bg-panel px-4 text-sm font-bold shadow-hard-sm hover:bg-accent hover:text-accent-ink sm:justify-self-end">
-                  Run it in the agent
-                </button>
-              </div>
-            </Reveal>
-          </li>
-        ))}
-      </ol>
-    </section>
-  )
-}
-
-// ---------- what happens after confirm ----------
-
-const FLOW: [string, string][] = [
-  ['You approve exactly the amount you are escrowing and sign the order in your wallet.', 'The contract takes that amount into escrow and records the order.'],
-  ['You can close the browser.', 'A keeper watches the oracle price. The keeper is any wallet, not a server of ours.'],
-  ['Nothing to do.', 'When the condition is met, the keeper calls execute. The contract swaps through an allowlisted router for the exact amount and rejects the fill if the output is below its own oracle-based floor.'],
-  ['You can cancel any time.', 'Cancel, refund and expiry always work, even when the owner has paused the contract.'],
-]
-
-function Flow() {
-  return (
-    <section className="py-10 sm:py-14">
-      <Heading kicker="After you press confirm">Who does what to your order.</Heading>
-      <Reveal>
-        <div className="border border-line bg-panel shadow-hard">
-          <div className="grid grid-cols-2 border-b border-line bg-ink text-canvas">
-            <p className="px-4 py-3 font-display text-lg">You</p>
-            <p className="border-l border-canvas/40 px-4 py-3 font-display text-lg">Contract and keeper</p>
-          </div>
-          {FLOW.map(([you, chain], i) => (
-            <div key={i} className="grid grid-cols-1 border-b border-line last:border-b-0 md:grid-cols-2">
-              <p className="p-4 text-sm font-semibold">{you}</p>
-              <p className="border-t border-line p-4 text-sm text-mute md:border-l md:border-t-0">{chain}</p>
+      <div className="border-t border-line p-4 sm:p-5" aria-live="polite">
+        {reading === null && <p className="text-sm text-mute">Type a strategy above.</p>}
+        {reading?.kind === 'ask' && <p className="text-sm">{reading.text}</p>}
+        {reading?.kind === 'error' && <p className="text-sm text-mute">{reading.text}</p>}
+        {reading?.kind === 'proposal' && (
+          <>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-base">How the agent reads it: {reading.label}</h3>
+              <span className="rounded-md bg-raised px-1.5 py-0.5 text-[11px] text-mute">Proposal, nothing sent</span>
             </div>
-          ))}
-        </div>
-      </Reveal>
-    </section>
-  )
-}
-
-// ---------- the agent band ----------
-
-function AgentBand({ onAgent }: { onAgent: () => void }) {
-  return (
-    <section className="py-10 sm:py-14">
-      <Reveal>
-        <div className="grid gap-8 border border-line bg-accent p-5 text-accent-ink shadow-hard-lg sm:p-8 lg:grid-cols-[1.1fr_1fr]">
-          <div>
-            <h2 className="text-3xl sm:text-5xl">Grant permission once. Read every command back.</h2>
-            <ul className="mt-5 space-y-2 text-sm font-semibold">
-              <li>The agent is a fixed command grammar, not a language model. The same words always mean the same action, and anything unclear is refused with an example.</li>
-              <li>Each plan is built from your real balance, the oracle price and a live quote, then read back before it runs.</li>
-              <li>Limits per command and per day, and a switch for each kind of action.</li>
-              <li>Your wallet still asks you to approve every transaction. The agent never sees a key.</li>
-            </ul>
-            <div className="mt-6">
-              <button onClick={onAgent} className="press min-h-[52px] border border-line bg-ink px-6 text-base font-bold text-canvas shadow-hard">
-                Open the agent
+            <dl className="flex flex-wrap gap-px overflow-hidden rounded-lg border border-line bg-line">
+              {reading.fields.map(([k, v]) => (
+                <div key={k} className="min-w-0 grow basis-[7rem] bg-raised px-3 py-2">
+                  <dt className="text-[11px] text-mute">{k}</dt>
+                  <dd className="num mt-0.5 break-words text-[13px] font-semibold">{v}</dd>
+                </div>
+              ))}
+            </dl>
+            {reading.note && <p className="mt-2 text-xs text-mute">{reading.note}</p>}
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+              <p className="num min-w-0 break-words text-xs text-mute">{reading.command}</p>
+              <button type="button" onClick={() => onOpenAgent(text)} className="press min-h-[40px] rounded-lg bg-accent px-3.5 text-sm font-semibold text-accent-ink hover:brightness-110">
+                Review it in the Agent
               </button>
             </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Four plain-words prompts read by the real rules, at the live ETH price, so the page shows breadth and not one demo twice. */
+function StrategyExamples({ onOpenAgent }: { onOpenAgent: (t: string) => void }) {
+  const eth = useEthPrice()
+  const price = eth.data?.last ?? null
+  const rows = useMemo(() => {
+    const round = (n: number) => String(Math.round(n))
+    const prompts = [
+      'Buy $100 worth of ETH when the price drops 5%',
+      'DCA $500 into ETH over the next 7 days',
+      ...(price ? [`Sell all my ETH if it falls to ${round(price * 0.9)} or rises to ${round(price * 1.2)}`] : []),
+      'Put a 5% trailing stop on all my ETH',
+    ]
+    return prompts.map((p) => ({ prompt: p, reading: read(p, price) }))
+  }, [price])
+  return (
+    <ul className="divide-y divide-line rounded-2xl border border-line bg-panel">
+      {rows.map(({ prompt, reading }) => (
+        <li key={prompt} className="p-4 sm:p-5">
+          <p className="text-[15px] font-medium">{prompt}</p>
+          {reading?.kind === 'proposal' ? (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+              <p className="min-w-0 text-sm text-mute">
+                <span className="font-semibold text-ink">{reading.label}</span> <span className="num break-words">{reading.command}</span>
+              </p>
+              <button type="button" onClick={() => onOpenAgent(prompt)} className="min-h-[36px] rounded-lg border border-control px-3 text-xs font-semibold hover:bg-raised">
+                Open in the Agent
+              </button>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-mute">{reading?.kind === 'ask' ? reading.text : 'The agent would ask for the missing detail.'}</p>
+          )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// ---------- 1. Is this for me? ----------
+
+const AUDIENCE: { who: string; text: string }[] = [
+  { who: 'Active crypto traders', text: 'You place several orders a day and want them set once and watched for you.' },
+  { who: 'DeFi users', text: 'You want to stay in your own wallet and still use stops and recurring buys.' },
+  { who: 'Advanced order users', text: 'You need stop-limit, trailing stop and OCO, not just buy and sell.' },
+  { who: 'AI-agent traders', text: 'You would rather describe a strategy than fill in six fields.' },
+]
+
+function Hero({ onTrade, onAgent, onOpenAgent }: { onTrade: () => void; onAgent: () => void; onOpenAgent: (t: string) => void }) {
+  return (
+    <section className={clsx(wrap, 'pt-6 sm:pt-12 lg:pt-16')}>
+      <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-14">
+        <div className="min-w-0">
+          <h1 className="min-w-0 break-words text-[2.5rem] font-extrabold leading-[1.04] sm:text-6xl lg:text-[4rem]">Trade on Arc with an AI agent.</h1>
+          <p className="mt-5 max-w-md text-lg text-mute">Describe a strategy, review it, approve it in your wallet.</p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button onClick={onTrade} className="press min-h-[52px] rounded-xl bg-accent px-6 text-base font-semibold text-accent-ink hover:brightness-110">
+              Open the terminal
+            </button>
+            <button onClick={onAgent} className="press min-h-[52px] rounded-xl border border-control bg-panel px-6 text-base font-semibold hover:bg-raised">
+              Try the Agent
+            </button>
           </div>
-          <div className="border border-dashed border-line bg-panel p-4 text-ink">
-            <p className="font-display text-lg">Permission</p>
-            <p className="text-xs text-mute">Example limits. You choose your own.</p>
-            <dl className="mt-3 divide-y divide-line/40 text-sm">
-              {[['Lasts', '24 hours'], ['Largest command', '100 USDC'], ['Per day', '500 USDC'], ['Before running', 'Ask "is this exact?"'], ['Allowed', 'Swaps, orders, DCA, cancel and pause']].map(([k, v]) => (
-                <div key={k} className="flex justify-between gap-3 py-2">
-                  <dt className="text-mute">{k}</dt>
-                  <dd className="num text-right font-semibold">{v}</dd>
+        </div>
+        <div className="min-w-0">
+          <div className="rounded-2xl border border-line bg-panel shadow-hard-lg">
+            <AgentDemo bare onOpenAgent={onOpenAgent} />
+            <div className="border-t border-line p-4 sm:p-5">
+              <PriceLine product="ETH-USD" label="ETH / USD" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <ul className="mt-16 grid gap-x-8 gap-y-6 border-t border-line pt-8 sm:grid-cols-2 lg:mt-24 lg:grid-cols-4">
+        {AUDIENCE.map((a) => (
+          <li key={a.who}>
+            <h2 className="text-base font-semibold tracking-normal">{a.who}</h2>
+            <p className="mt-1.5 text-sm text-mute">{a.text}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+// ---------- 2. Can I trust you? ----------
+
+function Trust() {
+  const testnet = NETWORKS['arc-testnet']
+  const mainnet = NETWORKS.arc
+  const tokens = useTokenList(mainnet).tokens
+  const rows: { k: string; v: ReactNode }[] = [
+    {
+      k: 'Order contract, Arc Testnet',
+      v: testnet.ordersAddress ? (
+        <a className="num inline-flex items-center gap-1 underline underline-offset-2" href={buildAddressExplorerUrl(testnet.chainId, testnet.ordersAddress)} target="_blank" rel="noopener noreferrer">
+          {shortAddr(testnet.ordersAddress)} <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      ) : (
+        'Not configured'
+      ),
+    },
+    {
+      k: 'Order contract, Arc mainnet',
+      v: mainnet.ordersAddress ? (
+        <a className="num inline-flex items-center gap-1 underline underline-offset-2" href={buildAddressExplorerUrl(mainnet.chainId, mainnet.ordersAddress)} target="_blank" rel="noopener noreferrer">
+          {shortAddr(mainnet.ordersAddress)} <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      ) : (
+        'Not deployed yet'
+      ),
+    },
+    { k: 'Networks', v: `Arc (${mainnet.chainId}) and Arc Testnet (${testnet.chainId})` },
+    ...(tokens.length > 0 ? [{ k: 'Tokens you can swap on Arc', v: `${tokens.length}, from the aggregator's list` }] : []),
+    { k: 'Gas token', v: 'USDC' },
+  ]
+  return (
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-16">
+            <div>
+              <h2 className="min-w-0 break-words text-4xl leading-[1.08] sm:text-5xl">Your funds stay yours. Everything is checkable.</h2>
+              <ul className="mt-8 space-y-4 text-base">
+                {[
+                  'Tactora never holds your keys. Your wallet signs every transaction, including the ones the Agent proposes.',
+                  'Orders are escrowed in a public contract. You can cancel and take your funds back at any time.',
+                  'The code is open, and the order contract passed a live test run on Arc Testnet on 26 November 2026.',
+                ].map((t) => (
+                  <li key={t} className="flex gap-3">
+                    <Check className="mt-1 h-4 w-4 shrink-0 text-brand" aria-hidden="true" />
+                    <span>{t}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-6 text-sm text-mute">Not yet done: an independent audit. The contract has 191 automated tests and the test run above, which is not the same thing. Size your risk accordingly.</p>
+              <div className="mt-5 flex flex-wrap gap-x-6 gap-y-1 text-sm font-semibold">
+                <a className="inline-flex min-h-[44px] items-center gap-1.5 underline underline-offset-4" href={`${BRAND.links.docs}/test-reports/ui-walkthrough-2026-11-26.md`} target="_blank" rel="noopener noreferrer">
+                  Read the test report <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+                <a className="inline-flex min-h-[44px] items-center gap-1.5 underline underline-offset-4" href={BRAND.links.github} target="_blank" rel="noopener noreferrer">
+                  Read the code <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+              </div>
+            </div>
+            <dl className="divide-y divide-line self-start rounded-2xl border border-line bg-panel">
+              {rows.map((r) => (
+                <div key={r.k} className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 px-5 py-4 text-sm">
+                  <dt className="text-mute">{r.k}</dt>
+                  <dd className="min-w-0 break-words text-right font-semibold">{r.v}</dd>
                 </div>
               ))}
             </dl>
           </div>
-        </div>
-      </Reveal>
-    </section>
-  )
-}
-
-// ---------- tokens ----------
-
-function Tokens() {
-  const q = useQuery({ queryKey: ['landing-tokens'], queryFn: () => fetchTokenList(5042), staleTime: 10 * 60_000, retry: 1 })
-  const list = (q.data ?? []).filter((t) => t.symbol !== 'USDC')
-  return (
-    <section className="py-10 sm:py-14">
-      <Heading kicker="Tokens">Swap any token the aggregator can route.</Heading>
-      <p className="-mt-4 mb-6 max-w-2xl text-sm text-mute">
-        The list comes from KyberSwap's registry for Arc, filtered to whitelisted tokens that are not flagged as honeypots or fee-on-transfer. A listing is not an endorsement. Orders and DCA also need a price feed for the token on the contract.
-      </p>
-      {q.isLoading ? (
-        <Skeleton className="h-40" />
-      ) : q.isError ? (
-        <p className="border border-line bg-raised p-4 text-sm">The token list could not be loaded right now. The backend may be offline. Open the terminal to retry.</p>
-      ) : list.length === 0 ? (
-        <p className="border border-line bg-raised p-4 text-sm">The registry returned no tokens for Arc.</p>
-      ) : (
-        <Reveal>
-          <ul className="flex flex-wrap gap-2">
-            {list.slice(0, 48).map((t) => (
-              <li key={t.address} className="flex items-center gap-2 border border-line bg-panel py-1.5 pl-1.5 pr-3 text-sm font-semibold">
-                <TokenBase token={{ symbol: t.symbol, logoURI: t.logoURI }} size={22} />
-                {t.symbol}
-              </li>
-            ))}
-            {list.length > 48 && <li className="flex items-center border border-line bg-raised px-3 text-sm font-semibold">+{list.length - 48} more</li>}
-          </ul>
         </Reveal>
-      )}
+      </div>
     </section>
   )
 }
 
-// ---------- owner powers ----------
+// ---------- 3. Do you understand my problem? ----------
 
-const CAN = ['Pause new orders and executions', 'Lower the keeper fee', 'Set a minimum order size', 'Queue a new token feed or router, public and delayed', 'Disable a token or router at once']
-const CANNOT = ['Take or freeze escrow, or block a refund', 'Raise the keeper fee', 'Add a token or router without the public delay', 'Upgrade or replace the contract code', 'Renounce ownership by accident']
+const PROBLEMS: { before: string; after: string }[] = [
+  { before: 'A different tool for swaps, orders, DCA and tracking.', after: 'One terminal and one wallet session for all four.' },
+  { before: 'Six fields to fill in for every conditional order.', after: 'Say what you want. The agent fills the fields and you can edit them.' },
+  { before: 'Watching the chart so a stop does not get missed.', after: 'Orders sit in escrow and a keeper fills them when your price hits. Close the tab.' },
+  { before: 'Strategies that live in your head or a notes app.', after: 'Stop-loss, take-profit, OCO, trailing stop and DCA run on rules you set.' },
+  { before: 'Not knowing the exact outcome until after you sign.', after: 'Every proposal lists amounts, fees and the minimum you receive first.' },
+]
 
-function OwnerPowers() {
+function Problems() {
   return (
-    <section className="py-10 sm:py-14">
-      <Heading kicker="Trust">What the owner can and cannot do.</Heading>
-      <Reveal>
-        <div className="grid border border-line bg-panel md:grid-cols-2">
-          <div className="p-5">
-            <h3 className="text-xl">Can</h3>
-            <ul className="mt-3 space-y-2 text-sm">
-              {CAN.map((x) => (
-                <li key={x} className="flex gap-2">
-                  <span className="mt-1.5 h-2 w-2 shrink-0 bg-ink" aria-hidden="true" />
-                  {x}
-                </li>
-              ))}
-            </ul>
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <SectionHead title="The work around a trade is the hard part." />
+          <div className="grid gap-x-12 border-t border-line lg:grid-cols-2">
+            <p className="hidden pt-4 text-sm font-semibold text-mute lg:block">Today</p>
+            <p className="hidden pt-4 text-sm font-semibold lg:block">With Tactora</p>
+            {PROBLEMS.map((p) => (
+              <div key={p.before} className="contents">
+                <p className="border-b border-line pt-5 text-mute lg:border-b lg:py-6">{p.before}</p>
+                <p className="border-b border-line pb-6 pt-2 font-medium lg:py-6">{p.after}</p>
+              </div>
+            ))}
           </div>
-          <div className="border-t border-line bg-raised p-5 md:border-l md:border-t-0">
-            <h3 className="text-xl">Cannot</h3>
-            <ul className="mt-3 space-y-2 text-sm">
-              {CANNOT.map((x) => (
-                <li key={x} className="flex gap-2">
-                  <span className="mt-1.5 h-2 w-2 shrink-0 border border-line" aria-hidden="true" />
-                  {x}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </Reveal>
-      <p className="mt-3 max-w-3xl text-sm text-mute">The contract is unaudited. These limits are enforced in code and covered by tests, but treat the software as unaudited and size your risk accordingly. Every owner action is a public transaction.</p>
+        </Reveal>
+      </div>
     </section>
   )
 }
 
-// ---------- faq ----------
+// ---------- 4. What do I get? ----------
 
-const FAQ = [
-  { q: 'Do you hold my funds?', a: 'No. Swaps go from your wallet through an aggregator router. Orders and DCA plans are escrowed in a smart contract that only you can cancel and that pays out only by its own rules. There is no deposit to us.' },
-  { q: 'Who executes my orders?', a: 'Any keeper. Execution is open to everyone and pays a keeper fee of at most 0.10% of the output. The built-in keeper runs on this site\'s backend, and you can run your own.' },
-  { q: 'What does the agent need from me?', a: 'One permission, with limits you choose. After that it still reads every command back, and your wallet still asks you to approve each transaction. It never sees your keys.' },
-  { q: 'Which tokens can I trade?', a: 'On Arc mainnet, every token the aggregator can route that is whitelisted and not flagged as a honeypot or fee-on-transfer. Orders and DCA need a price feed for the token on the contract.' },
-  { q: 'Is the contract audited?', a: 'Not yet. It has an extensive test suite and a live test campaign on Arc Testnet, but it is unaudited software.' },
-  { q: 'Can I try it without real money?', a: 'Yes. Switch to Testnet. You get test tokens, a test price feed you can move, and a test router, so every order type can be tried.' },
-] as const
+const ORDER_TYPES: { name: string; text: string }[] = [
+  { name: 'Market', text: 'Swap now at the best quoted route, with the minimum output shown first.' },
+  { name: 'Limit', text: 'Buy or sell when the price reaches your level.' },
+  { name: 'Stop-loss', text: 'Sell if the price falls to a level you choose.' },
+  { name: 'Take-profit', text: 'Sell when the price rises to your target.' },
+  { name: 'Stop-limit', text: 'A stop that becomes a limit order, so you set the worst price.' },
+  { name: 'Trailing stop', text: 'A stop that follows the price up by a distance you set.' },
+  { name: 'OCO', text: 'A stop-loss and a take-profit in one escrow. One runs, the other cannot.' },
+  { name: 'DCA', text: 'Recurring buys, hourly to monthly, with an optional price cap.' },
+]
+
+const DASHBOARD = ['Portfolio value and balances', 'Open orders and escrowed funds', 'DCA plans, with pause and resume', 'Trade history and fills', 'Realized and unrealized profit and loss']
+
+function Features({ onOpenAgent, onTrade, onDashboard }: { onOpenAgent: (t: string) => void; onTrade: () => void; onDashboard: () => void }) {
+  return (
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <SectionHead title="Everything you need to place, manage and review trades." />
+
+          <div className="grid gap-12 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-16">
+            <div>
+              <h3 className="text-2xl">AI agent trading</h3>
+              <p className="mt-3 max-w-md text-mute">Write a strategy in your own words. The agent turns it into one exact command and shows it back, so you can see what will run before it does.</p>
+              <ul className="mt-6 space-y-2 text-sm">
+                {['Natural-language prompts', 'The agent shows how it read your request', 'You edit the proposal before anything runs', 'You approve every transaction in your wallet'].map((t) => (
+                  <li key={t} className="flex gap-3">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-brand" aria-hidden="true" />
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div className="min-w-0">
+              <StrategyExamples onOpenAgent={onOpenAgent} />
+            </div>
+          </div>
+
+          <div className="mt-20 grid gap-12 border-t border-line pt-16 lg:grid-cols-[minmax(0,6fr)_minmax(0,5fr)] lg:gap-16">
+            <div className="order-2 lg:order-1">
+              <dl className="grid gap-x-8 sm:grid-cols-2">
+                {ORDER_TYPES.map((o) => (
+                  <div key={o.name} className="border-b border-line py-4">
+                    <dt className="text-sm font-semibold">{o.name}</dt>
+                    <dd className="mt-1 text-sm text-mute">{o.text}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+            <div className="order-1 min-w-0 lg:order-2">
+              <h3 className="text-2xl">Advanced trading</h3>
+              <p className="mt-3 max-w-md text-mute">A live chart, a buy and sell form and every order type in one screen. Orders are escrowed in the contract, not held by an exchange.</p>
+              <div className="mt-6 rounded-2xl border border-line bg-panel p-4">
+                <PriceLine product="BTC-USD" label="BTC / USD" />
+              </div>
+              <button onClick={onTrade} className="press mt-5 min-h-[44px] rounded-lg border border-control px-4 text-sm font-semibold hover:bg-raised">
+                Open the trading screen
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-20 grid gap-8 border-t border-line pt-16 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:gap-16">
+            <div>
+              <h3 className="text-2xl">Trading dashboard</h3>
+              <p className="mt-3 max-w-md text-mute">Everything you hold, everything you have waiting, and what it did.</p>
+              <button onClick={onDashboard} className="press mt-5 min-h-[44px] rounded-lg border border-control px-4 text-sm font-semibold hover:bg-raised">
+                Open the dashboard
+              </button>
+            </div>
+            <ul className="divide-y divide-line border-y border-line">
+              {DASHBOARD.map((d) => (
+                <li key={d} className="py-3.5 text-sm">
+                  {d}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 5. How does it work? ----------
+
+const STEPS: { title: string; text: string }[] = [
+  { title: 'Connect your wallet', text: 'Use a browser wallet, or a passkey wallet with your fingerprint where enabled.' },
+  { title: 'Pick a trading pair', text: 'Choose a token, see its chart and price, and switch between Arc and Arc Testnet.' },
+  { title: 'Set the order, or describe it', text: 'Fill in the order form, or write the strategy to the Agent.' },
+  { title: 'Review the proposal', text: 'Check amounts, fees and the minimum you receive. Edit anything, or cancel.' },
+  { title: 'Approve and sign', text: 'Your wallet asks you to confirm. Nothing runs before you do.' },
+  { title: 'Watch it in your dashboard', text: 'Orders wait in escrow and a keeper fills them at your price. Cancel any time for a refund.' },
+]
+
+function How() {
+  return (
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)] lg:gap-20">
+            <div>
+              <h2 className="min-w-0 break-words text-4xl leading-[1.08] sm:text-5xl lg:sticky lg:top-28">From wallet to filled order in six steps.</h2>
+            </div>
+            <ol className="relative">
+              {STEPS.map((s, i) => (
+                <li key={s.title} className="relative flex gap-5 pb-10 last:pb-0">
+                  {i < STEPS.length - 1 && <span className="absolute left-[15px] top-9 h-[calc(100%-2.25rem)] w-px bg-line" aria-hidden="true" />}
+                  <span className="num grid h-8 w-8 shrink-0 place-items-center rounded-full border border-control bg-panel text-sm font-semibold">{i + 1}</span>
+                  <div className="min-w-0 pt-0.5">
+                    <h3 className="text-xl">{s.title}</h3>
+                    <p className="mt-1.5 text-mute">{s.text}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 6. How much? ----------
+
+function Price({ onTrade }: { onTrade: () => void }) {
+  const health = useBackendHealth()
+  const fee = health.data?.platformFee
+  const swapFee = health.isLoading ? 'Checking' : fee ? `${(fee.bps / 100).toFixed(2)}% of the amount sold` : 'None right now'
+  const rows: { item: string; cost: string; note: string }[] = [
+    { item: 'Using Tactora', cost: 'Free', note: 'No subscription and no deposit with us.' },
+    { item: 'Market swaps', cost: swapFee, note: 'Set by the operator, capped at 1%, and shown in the proposal before you sign.' },
+    { item: 'Orders and DCA', cost: 'Up to 0.10% of the output', note: 'A keeper fee paid to whoever fills the order. The owner can only lower it.' },
+    { item: 'Network fee', cost: 'Paid in USDC', note: 'USDC is the gas token on Arc. A passkey wallet can have it sponsored on testnet.' },
+    { item: 'Price and slippage', cost: 'In the quote', note: 'The route price is in the minimum you receive. You set the slippage you accept.' },
+  ]
+  return (
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <SectionHead title="What it costs, in full.">Nothing up front. You pay small fees when something fills. Rates here are read live where the server knows them.</SectionHead>
+          <div className="overflow-hidden rounded-2xl border border-line bg-panel">
+            <table className="w-full text-left text-sm">
+              <thead className="sr-only">
+                <tr>
+                  <th>Item</th>
+                  <th>Cost</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.item} className={clsx('block px-5 py-4 md:table-row md:p-0', i > 0 && 'border-t border-line')}>
+                    <th scope="row" className="block font-semibold md:table-cell md:w-1/4 md:px-5 md:py-4">
+                      {r.item}
+                    </th>
+                    <td className="num block font-semibold md:table-cell md:w-1/4 md:px-5 md:py-4">{r.cost}</td>
+                    <td className="block text-mute md:table-cell md:px-5 md:py-4">{r.note}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-6 flex flex-wrap items-center gap-4">
+            <button onClick={onTrade} className="press min-h-[48px] rounded-xl bg-accent px-5 text-sm font-semibold text-accent-ink hover:brightness-110">
+              Open the terminal
+            </button>
+            <p className="text-sm text-mute">Start on Arc Testnet, where tokens have no value.</p>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+// ---------- 7. What if? ----------
+
+const FAQ: { q: string; a: string }[] = [
+  { q: 'Do I keep control of my wallet?', a: 'Yes. Tactora never holds your keys. Every transaction is signed in your own wallet, and orders are escrowed in a public contract, not with us.' },
+  { q: 'Does the AI Agent trade on its own?', a: 'No. It turns your words into one proposal and shows it. Nothing is sent until you approve, and your wallet still asks you to sign. Inside limits you set, a command can run right after the readback if you allow that, and anything bigger still waits for you.' },
+  { q: 'Can I review a strategy before it runs?', a: 'Yes. Every proposal lists the order type, amounts, prices, fees and the minimum you receive. You can edit it, send it back to the box, or cancel.' },
+  { q: 'What happens if a transaction fails?', a: 'Nothing is lost. The wallet shows the error, the Agent reports "Nothing was completed", and you can edit the command and try again. Cancelling an order or a DCA plan works at any time.' },
+  { q: 'Are my funds held by Tactora?', a: 'No. Funds stay in your wallet until you place an order. Then they sit in the order contract, which only you can cancel, and fills pay out to your wallet.' },
+  { q: 'Which network does it use?', a: 'Arc, and Arc Testnet for trying everything with test tokens. Pick the network in the header.' },
+  { q: 'How do stop-loss, take-profit, OCO and DCA work?', a: 'A stop-loss sells if the price falls to your level, and a take-profit sells if it rises. OCO pairs them so one cancels the other. DCA buys a fixed amount on a schedule. A keeper submits the fill when the price condition is met.' },
+  { q: 'What if the price moves past my stop?', a: 'A triggered order is not guaranteed to fill at that price. The contract refuses any fill below its own floor, so in a fast market an order can stay open. Your funds stay in escrow until it fills, you cancel or it expires.' },
+  { q: 'Is the contract audited?', a: 'Not yet. It has automated tests and a live testnet run, but no independent audit. Do not put in more than you can afford to lose.' },
+]
 
 function Faq() {
-  const [open, setOpen] = useState<number | null>(0)
   return (
-    <section className="py-10 sm:py-14">
-      <Heading kicker="Questions">Asked about this product.</Heading>
-      <div className="max-w-3xl border border-line bg-panel">
-        {FAQ.map((f, i) => (
-          <div key={f.q} className={clsx(i > 0 && 'border-t border-line')}>
-            <h3>
-              <button onClick={() => setOpen(open === i ? null : i)} aria-expanded={open === i} className="flex min-h-[56px] w-full items-center justify-between gap-4 px-4 text-left font-sans text-base font-bold hover:bg-raised">
-                {f.q}
-                <span className="num text-xl" aria-hidden="true">
-                  {open === i ? '-' : '+'}
-                </span>
-              </button>
-            </h3>
-            <AnimatePresence initial={false}>
-              {open === i && (
-                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.18 }} className="overflow-hidden">
-                  <p className="px-4 pb-4 text-sm text-mute">{f.a}</p>
-                </motion.div>
-              )}
-            </AnimatePresence>
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,4fr)_minmax(0,7fr)] lg:gap-20">
+            <h2 className="min-w-0 break-words text-4xl leading-[1.08] sm:text-5xl">Questions before you start.</h2>
+            <div className="divide-y divide-line border-y border-line">
+              {FAQ.map((f) => (
+                <details key={f.q} className="group">
+                  <summary className="flex min-h-[56px] cursor-pointer list-none items-center justify-between gap-4 py-4 text-base font-semibold hover:text-brand">
+                    {f.q}
+                    <span className="num text-xl text-mute group-open:hidden" aria-hidden="true">
+                      +
+                    </span>
+                    <span className="num hidden text-xl text-mute group-open:inline" aria-hidden="true">
+                      -
+                    </span>
+                  </summary>
+                  <p className="pb-5 pr-8 text-mute">{f.a}</p>
+                </details>
+              ))}
+            </div>
           </div>
-        ))}
+        </Reveal>
       </div>
     </section>
   )
@@ -429,46 +590,48 @@ function Faq() {
 
 // ---------- closing ----------
 
-function Closing({ onTrade }: { onTrade: () => void }) {
+function Closing({ onTrade, onAgent }: { onTrade: () => void; onAgent: () => void }) {
   return (
-    <section className="py-10 sm:py-14">
-      <Reveal>
-        <div className="border border-line bg-ink p-6 text-canvas shadow-hard-lg sm:p-10">
-          <h2 className="max-w-3xl text-4xl leading-tight sm:text-6xl">Try every order type on testnet first.</h2>
-          <p className="mt-4 max-w-xl text-sm text-canvas/80">Switch to Testnet, take test tokens from the faucet tool, move the test price, and watch a keeper fill your stop. When it behaves, switch to mainnet.</p>
-          <div className="mt-6 flex flex-wrap gap-3">
-            <button onClick={onTrade} className="press min-h-[52px] border border-canvas bg-accent px-6 text-base font-bold text-accent-ink shadow-[3px_3px_0_0_rgb(var(--bg))]">
-              Open the terminal
-            </button>
-            <a href={BRAND.links.docs} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-[52px] items-center border border-canvas px-6 text-base font-bold hover:bg-canvas hover:text-ink">
-              Read the documentation
-            </a>
+    <section className="border-t border-line py-20 sm:py-28">
+      <div className={wrap}>
+        <Reveal>
+          <div className="rounded-3xl border border-line bg-panel px-6 py-14 text-center sm:px-12 sm:py-20">
+            <h2 className="mx-auto min-w-0 max-w-2xl break-words text-4xl leading-[1.08] sm:text-5xl">Try a strategy on Arc Testnet first.</h2>
+            <p className="mx-auto mt-4 max-w-md text-mute">Take test tokens, set an order or ask the Agent, and watch it fill.</p>
+            <div className="mt-8 flex flex-wrap justify-center gap-3">
+              <button onClick={onTrade} className="press min-h-[52px] rounded-xl bg-accent px-6 text-base font-semibold text-accent-ink hover:brightness-110">
+                Open the terminal
+              </button>
+              <button onClick={onAgent} className="press min-h-[52px] rounded-xl border border-control bg-panel px-6 text-base font-semibold hover:bg-raised">
+                Try the Agent
+              </button>
+            </div>
           </div>
-        </div>
-      </Reveal>
+        </Reveal>
+      </div>
     </section>
   )
 }
 
 export function Landing() {
   const { setPage } = useSettings()
-  const tryCommand = useCallback(
-    (command: string) => {
-      setAgentPrefill(command)
-      setPage('agent')
-    },
-    [setPage],
-  )
+  const trade = () => setPage('trade')
+  const agent = () => setPage('agent')
+  const dashboard = () => setPage('dashboard')
+  const openAgent = (text: string) => {
+    setAgentPrefill(text)
+    agent()
+  }
   return (
-    <div>
-      <Hero onTrade={() => setPage('trade')} onAgent={() => setPage('agent')} />
-      <FeatureIndex onTry={tryCommand} />
-      <Flow />
-      <AgentBand onAgent={() => setPage('agent')} />
-      <Tokens />
-      <OwnerPowers />
+    <div className="w-full pb-8">
+      <Hero onTrade={trade} onAgent={agent} onOpenAgent={openAgent} />
+      <Trust />
+      <Problems />
+      <Features onOpenAgent={openAgent} onTrade={trade} onDashboard={dashboard} />
+      <How />
+      <Price onTrade={trade} />
       <Faq />
-      <Closing onTrade={() => setPage('trade')} />
+      <Closing onTrade={trade} onAgent={agent} />
     </div>
   )
 }

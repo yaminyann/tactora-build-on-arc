@@ -10,6 +10,7 @@ import { Footer } from '@/components/Footer'
 import { Terminal } from '@/components/Terminal'
 import { Dashboard } from '@/components/Dashboard'
 import { Admin } from '@/components/Admin'
+import { Platform } from '@/components/Platform'
 import { AgentStation } from '@/components/AgentStation'
 import { SettingsPage } from '@/components/SettingsPage'
 import { Landing } from '@/components/Landing'
@@ -17,6 +18,7 @@ import { PageFade } from '@/components/motion'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { Skeleton } from '@/components/ui'
 import { useShortcuts } from '@/lib/shortcuts'
+import { ConnectDialogProvider } from '@/wallet/ConnectDialog'
 
 function Shell() {
   const { networkKey, page, setPage, toasts, toastPosition, theme } = useSettings()
@@ -38,7 +40,7 @@ function Shell() {
         Skip to content
       </a>
       <Header network={network} />
-      <main id="main" className="mx-auto max-w-[1600px] px-3 pb-6 pt-4 sm:px-5">
+      <main id="main" className="w-full px-4 pb-6 pt-4 sm:px-6 lg:px-8">
         <AnimatePresence mode="wait" initial={false}>
           <PageFade key={page} pageKey={page}>
             <ErrorBoundary resetKey={page}>
@@ -48,6 +50,7 @@ function Shell() {
               {page === 'agent' && <AgentStation network={network} />}
               {page === 'settings' && <SettingsPage network={network} />}
               {page === 'admin' && <Admin network={network} />}
+              {page === 'platform' && <Platform />}
             </ErrorBoundary>
           </PageFade>
         </AnimatePresence>
@@ -62,7 +65,9 @@ function Shell() {
 export default function App() {
   return (
     <SettingsProvider>
-      <Shell />
+      <ConnectDialogProvider>
+        <Shell />
+      </ConnectDialogProvider>
     </SettingsProvider>
   )
 }

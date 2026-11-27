@@ -42,6 +42,18 @@ describe('test router provider (testnet)', () => {
     expect((await p.fetch('price', req, new AbortController().signal)).kind).toBe('no_liquidity')
   })
 
+  test('a router that cannot pay out the funded token is no liquidity, not a quote that reverts', async () => {
+    const sellTbtc: GatewayRequest = { ...req, sellToken: TBTC, buyToken: USDC, sellAmount: '5000' }
+    const withBalance = (have: bigint): TestRouterReader => ({ ...reader({ [ROUTER_A]: 4_420_000n }), balance: async () => have })
+    const low = createTestRouterProvider({ id: 'test-router', router: ROUTER_A, chainId: 5042002, reader: withBalance(1_500_000n), fundedToken: USDC as Address })
+    expect((await low.fetch('quote', sellTbtc, new AbortController().signal)).kind).toBe('no_liquidity')
+    const funded = createTestRouterProvider({ id: 'test-router', router: ROUTER_A, chainId: 5042002, reader: withBalance(21_000_000n), fundedToken: USDC as Address })
+    expect((await funded.fetch('quote', sellTbtc, new AbortController().signal)).kind).toBe('quote')
+    // Minted test tokens need no balance check: buying tBTC works with an empty router.
+    const mint = createTestRouterProvider({ id: 'test-router', router: ROUTER_A, chainId: 5042002, reader: { ...reader({ [ROUTER_A]: 13_000n }), balance: async () => 0n }, fundedToken: USDC as Address })
+    expect((await mint.fetch('quote', req, new AbortController().signal)).kind).toBe('quote')
+  })
+
   test('only answers on Arc Testnet', () => {
     const p = createTestRouterProvider({ id: 'test-router', router: ROUTER_A, chainId: 5042002, reader: reader({}) })
     expect(p.supports(5042002)).toBe(true)

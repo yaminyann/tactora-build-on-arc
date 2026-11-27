@@ -16,6 +16,7 @@ export function parseOnchainError(error: unknown): string {
   if (m.includes('nottriggered')) return 'The trigger condition is not met yet.'
   if (m.includes('invalidparameters')) return 'The contract rejected these parameters (check trigger prices against the current price).'
   if (m.includes('reverted')) return 'The transaction reverted. Check the values and try again.'
+  if (m.includes('rate limit') || m.includes('exceeds defined limit') || m.includes('does not exist / is not available') || m.includes('429')) return 'The network node is busy or rate-limiting this connection. Wait a few seconds and try again.'
   if (m.includes('network') || m.includes('timeout') || m.includes('fetch')) return 'Network issue. Check your connection and retry.'
   return 'Something went wrong. Please try again.'
 }

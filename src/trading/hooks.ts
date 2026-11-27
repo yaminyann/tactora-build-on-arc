@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useQueries, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { erc20Abi, zeroAddress, type Address, type PublicClient } from 'viem'
 import { ordersAbi } from './ordersAbi'
@@ -48,18 +48,46 @@ export function useOracle(network: NetworkConfig, base: TokenInfo | undefined) {
   })
 }
 
-/** Oracle state for several tokens at once, keyed by lowercase address. */
+const NO_PRICES: Record<string, OracleState | undefined> = {}
+
+/**
+ * Oracle state for several tokens at once, keyed by lowercase address. Two Multicall3 reads in total (feed
+ * registration for every token, then the price for the ones that have a feed) instead of two calls per token,
+ * which keeps the page well under the public RPC's rate limit.
+ */
 export function useOraclePrices(network: NetworkConfig, tokens: TokenInfo[]) {
   const client = usePublicClient({ chainId: network.chainId })
-  return useQueries({
-    queries: tokens.map((t) => ({
-      queryKey: ['oracle', network.key, t.address, network.ordersAddress],
-      enabled: Boolean(client),
-      refetchInterval: 15_000,
-      queryFn: async (): Promise<OracleState> => readOracle(client as PublicClient, network.ordersAddress, t.address),
-    })),
-    combine: (results) => Object.fromEntries(tokens.map((t, i) => [t.address.toLowerCase(), results[i]?.data])) as Record<string, OracleState | undefined>,
+  const orders = network.ordersAddress
+  const addresses = tokens.map((t) => t.address)
+  const q = useQuery({
+    queryKey: ['oracle', 'all', network.key, orders, addresses.join(',')],
+    enabled: Boolean(client && addresses.length > 0),
+    refetchInterval: 20_000,
+    queryFn: async (): Promise<Record<string, OracleState | undefined>> => {
+      const out: Record<string, OracleState | undefined> = {}
+      if (!orders) {
+        for (const a of addresses) out[a.toLowerCase()] = { status: 'no-contract' }
+        return out
+      }
+      const configs = await client!.multicall({ contracts: addresses.map((a) => ({ address: orders, abi: ordersAbi, functionName: 'tokenConfigs' as const, args: [a] as const })), allowFailure: true })
+      const withFeed = addresses.filter((_, i) => configs[i].status === 'success' && configs[i].result[0] !== zeroAddress)
+      const prices = withFeed.length
+        ? await client!.multicall({ contracts: withFeed.map((a) => ({ address: orders, abi: ordersAbi, functionName: 'currentPrice' as const, args: [a] as const })), allowFailure: true })
+        : []
+      addresses.forEach((a, i) => {
+        const key = a.toLowerCase()
+        const cfg = configs[i]
+        if (cfg.status !== 'success') out[key] = { status: 'unavailable', message: 'The oracle price could not be read.' }
+        else if (cfg.result[0] === zeroAddress) out[key] = { status: 'no-feed' }
+        else {
+          const r = prices[withFeed.indexOf(a)]
+          out[key] = r && r.status === 'success' ? { status: 'ok', price18: r.result[0], updatedAt: Number(r.result[1]) } : { status: 'unavailable', message: revertName(r && r.status === 'failure' ? r.error : null) }
+        }
+      })
+      return out
+    },
   })
+  return q.data ?? NO_PRICES
 }
 
 export function useBalances(network: NetworkConfig, owner: Address | undefined) {
@@ -70,7 +98,7 @@ export function useBalances(network: NetworkConfig, owner: Address | undefined) 
   return useQuery({
     queryKey: ['balances', network.key, owner, tokens.length],
     enabled: Boolean(client && owner),
-    refetchInterval: 12_000,
+    refetchInterval: 15_000,
     queryFn: async () => {
       if (!client || !owner) return {}
       // One Multicall3 request for every token instead of one RPC call per token. A token whose
@@ -104,27 +132,33 @@ export function useOrders(network: NetworkConfig, owner: Address | undefined) {
   return useQuery({
     queryKey: ['orders', network.key, owner, orders],
     enabled: Boolean(client && owner && orders),
-    refetchInterval: 8_000,
+    refetchInterval: 12_000,
     queryFn: async (): Promise<OrderView[]> => {
       if (!client || !owner || !orders) return []
       const ids = await client.readContract({ address: orders, abi: ordersAbi, functionName: 'getOrderIds', args: [owner] })
       if (ids.length === 0) return []
+      // One request for every row and its readiness. checkOrder answers "not open" for closed orders, so the
+      // readiness of closed ones is simply ignored below.
       const data = await client.multicall({
-        contracts: ids.map((id) => ({ address: orders, abi: ordersAbi, functionName: 'getOrder' as const, args: [id] as const })),
-        allowFailure: false,
+        contracts: ids.flatMap((id) => [
+          { address: orders, abi: ordersAbi, functionName: 'getOrder' as const, args: [id] as const },
+          { address: orders, abi: ordersAbi, functionName: 'checkOrder' as const, args: [id] as const },
+        ]),
+        allowFailure: true,
       })
-      const views: OrderView[] = data.map((o, i) => ({ id: ids[i], ...o }))
-      const open = views.filter((v) => v.status === Status.OPEN)
-      if (open.length > 0) {
-        const checks = await client.multicall({
-          contracts: open.map((v) => ({ address: orders, abi: ordersAbi, functionName: 'checkOrder' as const, args: [v.id] as const })),
-          allowFailure: false,
-        })
-        open.forEach((v, i) => {
-          v.reasonCode = checks[i][1]
-          v.livePrice = checks[i][2]
-        })
-      }
+      const views: OrderView[] = []
+      ids.forEach((id, i) => {
+        const row = data[i * 2]
+        if (row.status !== 'success') return
+        const view: OrderView = { id, ...(row.result as Omit<OrderView, 'id'>) }
+        const check = data[i * 2 + 1]
+        if (view.status === Status.OPEN && check.status === 'success') {
+          const c = check.result as readonly [boolean, number, bigint, bigint]
+          view.reasonCode = c[1]
+          view.livePrice = c[2]
+        }
+        views.push(view)
+      })
       return views
     },
   })
@@ -136,26 +170,27 @@ export function useDcas(network: NetworkConfig, owner: Address | undefined) {
   return useQuery({
     queryKey: ['dcas', network.key, owner, orders],
     enabled: Boolean(client && owner && orders),
-    refetchInterval: 8_000,
+    refetchInterval: 12_000,
     queryFn: async (): Promise<DcaView[]> => {
       if (!client || !owner || !orders) return []
       const ids = await client.readContract({ address: orders, abi: ordersAbi, functionName: 'getDcaIds', args: [owner] })
       if (ids.length === 0) return []
       const data = await client.multicall({
-        contracts: ids.map((id) => ({ address: orders, abi: ordersAbi, functionName: 'getDca' as const, args: [id] as const })),
-        allowFailure: false,
+        contracts: ids.flatMap((id) => [
+          { address: orders, abi: ordersAbi, functionName: 'getDca' as const, args: [id] as const },
+          { address: orders, abi: ordersAbi, functionName: 'checkDca' as const, args: [id] as const },
+        ]),
+        allowFailure: true,
       })
-      const views: DcaView[] = data.map((d, i) => ({ id: ids[i], ...d }))
-      const live = views.filter((v) => v.status <= 1)
-      if (live.length > 0) {
-        const checks = await client.multicall({
-          contracts: live.map((v) => ({ address: orders, abi: ordersAbi, functionName: 'checkDca' as const, args: [v.id] as const })),
-          allowFailure: false,
-        })
-        live.forEach((v, i) => {
-          v.reasonCode = checks[i][1]
-        })
-      }
+      const views: DcaView[] = []
+      ids.forEach((id, i) => {
+        const row = data[i * 2]
+        if (row.status !== 'success') return
+        const view: DcaView = { id, ...(row.result as Omit<DcaView, 'id'>) }
+        const check = data[i * 2 + 1]
+        if (view.status <= 1 && check.status === 'success') view.reasonCode = (check.result as readonly [boolean, number, bigint, bigint])[1]
+        views.push(view)
+      })
       return views
     },
   })
@@ -173,7 +208,7 @@ export interface ExecutionLog {
 }
 
 const LOG_CHUNK = 10_000n
-const MAX_CHUNKS = 40
+const MAX_CHUNKS = 8
 const LOG_CACHE_VERSION = 1
 
 interface StoredLogs {
@@ -300,5 +335,6 @@ export function useNowSeconds(intervalMs = 15_000): number {
 }
 
 export function useBackendHealth() {
-  return useQuery({ queryKey: ['backend-health'], queryFn: fetchHealth, refetchInterval: 15_000, retry: false })
+  // Several components read this at once (header, footer, forms). staleTime stops each one from refetching when it mounts.
+  return useQuery({ queryKey: ['backend-health'], queryFn: fetchHealth, refetchInterval: 20_000, staleTime: 15_000, retry: false })
 }

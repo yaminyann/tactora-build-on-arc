@@ -11,7 +11,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { clsx } from 'clsx'
-import { TIMEFRAMES, sma, type Candle, type Timeframe } from '@/trading/market'
+import { TIMEFRAMES, priceDecimals, sma, type Candle, type Timeframe } from '@/trading/market'
 import { useSettings } from '@/trading/settings'
 import { Notice, Skeleton } from './ui'
 
@@ -26,11 +26,15 @@ interface Props {
   error: string | null
   timeframe: Timeframe
   onTimeframe: (t: Timeframe) => void
-  source: string | null
+  /** Footer text naming where the chart comes from. */
+  sourceLabel: string | null
   live: boolean
+  liveLabel?: string
+  /** Last price, used to pick how many decimals the price axis shows. */
+  lastPrice?: number | null
 }
 
-export function PriceChart({ candles, loading, error, timeframe, onTimeframe, source, live }: Props) {
+export function PriceChart({ candles, loading, error, timeframe, onTimeframe, sourceLabel, live, liveLabel = 'Live', lastPrice = null }: Props) {
   const { theme, accent, chartVolume: showVol, chartMa: showSma, chartType, set } = useSettings()
   const host = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -81,6 +85,15 @@ export function PriceChart({ candles, loading, error, timeframe, onTimeframe, so
   }, [theme, accent])
 
   const sma20 = useMemo(() => sma(candles, 20), [candles])
+
+  // Small prices (0.0001462) need more decimals than the library's default two.
+  const decimals = priceDecimals(lastPrice ?? candles[candles.length - 1]?.close ?? null)
+  useEffect(() => {
+    const priceFormat = { type: 'price' as const, precision: decimals, minMove: 1 / 10 ** decimals }
+    candleRef.current?.applyOptions({ priceFormat })
+    closeRef.current?.applyOptions({ priceFormat })
+    smaRef.current?.applyOptions({ priceFormat })
+  }, [decimals])
 
   useEffect(() => {
     const t = (n: number) => n as UTCTimestamp
@@ -147,10 +160,10 @@ export function PriceChart({ candles, loading, error, timeframe, onTimeframe, so
       </div>
 
       <div className="flex items-center justify-between border-t border-line px-3 py-1.5 text-[11px] text-mute">
-        <span>{source ? `Reference chart: Coinbase ${source}. Not an Arc pool price.` : 'No reference market for this asset.'}</span>
+        <span>{sourceLabel ?? 'No market data for this asset.'}</span>
         <span className={clsx('flex items-center gap-1', live && 'text-up')}>
           <span className={clsx('h-2 w-2', live ? 'bg-up' : 'bg-mute')} aria-hidden="true" />
-          {live ? 'Live' : 'Not streaming'}
+          {live ? liveLabel : 'Not updating'}
         </span>
       </div>
     </div>

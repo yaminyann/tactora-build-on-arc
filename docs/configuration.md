@@ -14,6 +14,9 @@ Vite exposes only variables that start with `VITE_`. These are public by design.
 | `VITE_ORDERS_DEPLOY_TX_ARC_MAINNET` | Optional | Same, for mainnet |
 | `VITE_SOCIAL_X`, `VITE_SOCIAL_DISCORD`, `VITE_SOCIAL_TELEGRAM`, `VITE_SOCIAL_GITHUB` | Optional | Footer social links (https only). A link shows only when set; GitHub defaults to this repository |
 | `VITE_DOCS_URL`, `VITE_SUPPORT_URL`, `VITE_TERMS_URL`, `VITE_PRIVACY_URL` | Optional | Footer links. Terms and Privacy open a plain-language placeholder until set |
+| `VITE_CIRCLE_CLIENT_KEY` | Optional | Circle Modular Wallets Client Key (`TEST_API_KEY:...` or `LIVE_API_KEY:...`). Turns on the passkey (fingerprint) wallet. Public by design. Set the Passkey Domain in the Circle Console to your site's host. See [api-keys.md](api-keys.md) |
+| `VITE_CIRCLE_CLIENT_URL` | Optional | Circle endpoint, default `https://modular-sdk.circle.com/v1/rpc/w3s/buidl` |
+| `VITE_CIRCLE_SPONSOR_GAS` | Optional | `true` or `false`. Whether Circle's Gas Station pays network fees. Default: on for testnet, off for mainnet (mainnet needs a Gas Station policy in the Console first) |
 | `VITE_DEFAULT_NETWORK` | Optional (`arc-testnet`) | `arc` or `arc-testnet`. The network a first-time visitor opens on. A visitor's own choice is remembered and wins |
 
 Changing a `VITE_` variable needs a dev-server restart.
@@ -38,9 +41,14 @@ Changing a `VITE_` variable needs a dev-server restart.
 | `KYBER_ROUTER_ALLOWLIST` | KyberSwap router | Comma-separated router addresses the backend accepts from KyberSwap. Anything else is refused |
 | `PLATFORM_FEE_BPS` | `0` | Fee on browser market swaps in basis points of the sell amount (0 = off, max 100). Paid by the aggregator to `PLATFORM_FEE_RECIPIENT` inside the swap. Not charged on orders, DCA, keepers or testnet. See [admin-guide.md](admin-guide.md) |
 | `PLATFORM_FEE_RECIPIENT` | none | Address that receives the swap fee. Required when `PLATFORM_FEE_BPS` > 0. An invalid fee setting turns the fee off and logs a warning |
-| `AGENT_LLM_URL` | none | Optional. Base URL of an OpenAI-compatible chat API (for example local Ollama `http://localhost:11434/v1`). With `AGENT_LLM_MODEL` it switches on `POST /agent-chat`. Unset: the Agent uses its built-in rules only |
+| `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY` | none | Keys for the chat model providers the admin can choose on the Platform page (primary, plus an optional fallback). A provider with no key cannot be selected. Where to get each: [api-keys.md](api-keys.md). Never sent to the browser |
+| `AGENT_LLM_URL` | none | Optional "Custom" provider: base URL of any OpenAI-compatible chat API (for example local Ollama `http://localhost:11434/v1`). With `AGENT_LLM_MODEL` it is the starting config when the admin has saved nothing. Nothing configured: the Agent uses its built-in rules only |
 | `AGENT_LLM_MODEL` | none | Model name for the endpoint above |
-| `AGENT_LLM_API_KEY` | none | Bearer key if the endpoint needs one. Never sent to the browser |
+| `AGENT_LLM_API_KEY` | none | Bearer key for the Custom endpoint if it needs one |
+| `PLATFORM_ADMIN_ADDRESSES` | none | Comma-separated wallets that may sign in to the Platform dashboard. Invalid entries are ignored and logged, never trusted. Plain wallets only. Not the same as the contract owner |
+| `SECRETS_ENCRYPTION_KEY` | none | At least 16 characters. Turns on saving API keys from the dashboard, encrypted (AES-256-GCM) in `DATA_DIR/secrets.json`. Unset: that feature is off and nothing is written. Losing it means entering the keys again |
+| `DATA_DIR` | `./data` | Folder for `agent-llm.json`, the admin's saved chat model choice. Keep it on a volume (the compose file mounts `/app/data`) |
+| `GECKO_CALLS_PER_MIN` | `24` | Budget of GeckoTerminal candle calls per minute for `/market/candles`. The free upstream allows about 30. DexScreener and GeckoTerminal need no key |
 | `AGENT_LLM_DAILY_CALLS` | `2000` | Global limit of model calls per UTC day |
 | `AGENT_LLM_TIMEOUT_MS` | `12000` | Per-call timeout (1000 to 30000) |
 | `ALERT_WEBHOOK_URL` | none | Receives `{"text": "..."}` for keeper and provider alerts (deduplicated, secrets redacted) |
@@ -86,6 +94,7 @@ Changing a `VITE_` variable needs a dev-server restart.
 
 For each chain the backend uses, in order:
 
+0. Browser: `VITE_RPC_URL_ARC_TESTNET` and `VITE_RPC_URL_ARC` (one URL or several separated by commas, tried in order). Unset, the browser uses the public endpoint, which rate-limits. Set these at build time for any real deployment. Requests are JSON-RPC batched and multicalls use 16 KB batches.
 1. `RPC_URL_<chain>` (for example `RPC_URL_Arc_Testnet`, `RPC_URL_Arc`): your own provider URL, or several separated by commas. With several, a failing endpoint falls over to the next. Recommended for any deployed keeper.
 2. The provisioned proxy (`RPC_PROXY_BASE_URL`, `RPC_PROXY_TOKEN`, `RPC_PROXY_CHAINS`) when present. It exists only inside Arc Studio and is never available on other hosts.
 3. The public Arc RPC from the generated chain facts.

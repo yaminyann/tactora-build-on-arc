@@ -14,9 +14,11 @@ const clean = (v: unknown): string | undefined => {
 }
 
 export const BRAND = {
-  name: 'Lumarc',
-  tagline: 'Trade, automate and command on Arc',
-  description: 'A non-custodial trading terminal for Arc: aggregator swaps, escrowed limit, stop and DCA orders, and a command-driven agent.',
+  name: 'Tactora',
+  domain: 'tactora.xyz',
+  url: 'https://tactora.xyz',
+  tagline: 'AI-powered trading on Arc',
+  description: 'An intelligent on-chain trading platform: execute complex strategies with natural-language AI agents and advanced order tools, from your own wallet.',
   links: {
     x: clean(env.VITE_SOCIAL_X),
     discord: clean(env.VITE_SOCIAL_DISCORD),

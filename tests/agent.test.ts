@@ -128,6 +128,13 @@ describe('agent permission', () => {
   test('scopes switch whole kinds of action off', () => {
     const p = granted({ scopes: { swap: true, orders: false, dca: true, manage: true } })
     expect(gateCommand(p, 'orders', 5, 0, NOW)).toMatchObject({ allowed: false })
+    // Protective sells ignore the spend limits but still need a yes, even in auto mode; scopes and expiry still apply.
+    const auto = granted({ mode: 'auto', maxPerCommand: 100, dailyLimit: 500 })
+    expect(gateCommand(auto, 'orders', 90_000, 0, NOW)).toMatchObject({ allowed: false })
+    expect(gateCommand(auto, 'orders', 90_000, 0, NOW, true)).toEqual({ allowed: true, autoRun: false })
+    expect(gateCommand(auto, 'orders', 90_000, 499, NOW, true)).toEqual({ allowed: true, autoRun: false })
+    expect(gateCommand(granted({ scopes: { swap: true, orders: false, dca: true, manage: true } }), 'orders', 5, 0, NOW, true)).toMatchObject({ allowed: false })
+    expect(gateCommand(granted({ expiresAt: NOW - 1 }), 'orders', 5, 0, NOW, true)).toMatchObject({ allowed: false })
     expect(gateCommand(p, 'swap', 5, 0, NOW)).toMatchObject({ allowed: true })
   })
 
@@ -172,12 +179,13 @@ describe('settings', () => {
     expect(s.themePref).toBe('light')
     expect(s.slippageBps).toBe(1000)
     expect(s.expiryDays).toBe(1)
-    // Retired accents (iris, teal) and unknown ones fall back to the default.
-    expect(s.accent).toBe('lavender')
-    expect(sanitizeSettings({ accent: 'iris' }).accent).toBe('lavender')
-    // Names from the yellow build map to the nearest soft colour.
-    expect(sanitizeSettings({ accent: 'signal' }).accent).toBe('butter')
-    expect(sanitizeSettings({ accent: 'pink' }).accent).toBe('rose')
+    // Retired accents (iris, teal) and unknown ones fall back to the default brand purple.
+    expect(s.accent).toBe('primary')
+    expect(sanitizeSettings({ accent: 'iris' }).accent).toBe('primary')
+    // Names from earlier builds map to a Tactora brand colour; a still-valid name is kept.
+    expect(sanitizeSettings({ accent: 'signal' }).accent).toBe('primary')
+    expect(sanitizeSettings({ accent: 'butter' }).accent).toBe('primary')
+    expect(sanitizeSettings({ accent: 'lavender' }).accent).toBe('lavender')
     expect(s.scale).toBe('md')
     expect(s.motion).toBe('full')
     expect(s.density).toBe('comfortable')
@@ -189,15 +197,15 @@ describe('settings', () => {
   })
 
   test('valid values survive', () => {
-    const s = sanitizeSettings({ themePref: 'system', accent: 'peach', scale: 'lg', motion: 'reduced', density: 'compact', startPage: 'trade', toasts: 'errors', toastPosition: 'bottom-right', chartType: 'line', defaultOrderType: 'limit', defaultTimeframe: '4h', chartVolume: false, networkKey: 'arc', timeFormat: '12h', timeZone: 'utc', privacy: true, shortcuts: false })
-    expect(s).toMatchObject({ themePref: 'system', accent: 'peach', scale: 'lg', motion: 'reduced', density: 'compact', startPage: 'trade', toasts: 'errors', toastPosition: 'bottom-right', chartType: 'line', defaultOrderType: 'limit', defaultTimeframe: '4h', chartVolume: false, networkKey: 'arc', timeFormat: '12h', timeZone: 'utc', privacy: true, shortcuts: false })
+    const s = sanitizeSettings({ themePref: 'system', accent: 'violet', scale: 'lg', motion: 'reduced', density: 'compact', startPage: 'trade', toasts: 'errors', toastPosition: 'bottom-right', chartType: 'line', defaultOrderType: 'limit', defaultTimeframe: '4h', chartVolume: false, networkKey: 'arc', timeFormat: '12h', timeZone: 'utc', privacy: true, shortcuts: false })
+    expect(s).toMatchObject({ themePref: 'system', accent: 'violet', scale: 'lg', motion: 'reduced', density: 'compact', startPage: 'trade', toasts: 'errors', toastPosition: 'bottom-right', chartType: 'line', defaultOrderType: 'limit', defaultTimeframe: '4h', chartVolume: false, networkKey: 'arc', timeFormat: '12h', timeZone: 'utc', privacy: true, shortcuts: false })
     expect(s.page).toBe('trade')
   })
 
   test('hostile or empty input never throws and never escapes the allowed values', () => {
     for (const raw of [null, undefined, 5, 'x', [], [1, 2], { timeZone: 'Mars/Base', timeFormat: 7, privacy: 'true', shortcuts: 0, slippageBps: -5, expiryDays: 1e99 }, JSON.parse('{"__proto__":{"accent":"x"},"accent":{"a":1}}')]) {
       const s = sanitizeSettings(raw)
-      expect(s.accent).toBe('lavender')
+      expect(s.accent).toBe('primary')
       expect(['local', 'utc']).toContain(s.timeZone)
       expect(['24h', '12h']).toContain(s.timeFormat)
       expect(s.privacy).toBe(false)

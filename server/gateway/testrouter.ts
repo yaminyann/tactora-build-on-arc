@@ -14,10 +14,19 @@ export const testRouterAbi = [
 export interface TestRouterReader {
   quote(router: Address, tokenIn: Address, tokenOut: Address, amountIn: bigint): Promise<bigint>
   allowance(token: Address, owner: Address, spender: Address): Promise<bigint>
+  /** Token balance of an address. Used to see whether the router can actually pay out the funded token. */
+  balance?(token: Address, owner: Address): Promise<bigint>
 }
 
-export function createTestRouterProvider(opts: { id: string; router: Address; chainId: number; reader: TestRouterReader }): QuoteProvider {
-  const { id, router, chainId, reader } = opts
+export function createTestRouterProvider(opts: {
+  id: string
+  router: Address
+  chainId: number
+  reader: TestRouterReader
+  /** The token the router pays from its own balance (USDC). Test tokens are minted, so they need no check. */
+  fundedToken?: Address
+}): QuoteProvider {
+  const { id, router, chainId, reader, fundedToken } = opts
   return {
     id,
     configured: () => true,
@@ -32,6 +41,11 @@ export function createTestRouterProvider(opts: { id: string; router: Address; ch
         return { kind: 'no_liquidity' }
       }
       if (out === 0n) return { kind: 'no_liquidity' }
+      // A router that cannot pay out would revert the swap. Say "no liquidity" instead of quoting something that fails.
+      if (fundedToken && reader.balance && req.buyToken.toLowerCase() === fundedToken.toLowerCase()) {
+        const have = await reader.balance(fundedToken, router).catch(() => null)
+        if (have !== null && have < out) return { kind: 'no_liquidity' }
+      }
       let allowance: GatewayQuote['allowance'] = null
       const actual = await reader.allowance(req.sellToken as Address, req.taker as Address, router).catch(() => 0n)
       if (actual < sell) allowance = { spender: router, actual }
@@ -62,5 +76,6 @@ export function viemTestRouterReader(client: {
   return {
     quote: (router, tokenIn, tokenOut, amountIn) => client.readContract({ address: router, abi: testRouterAbi, functionName: 'quote', args: [tokenIn, tokenOut, amountIn] } as never) as Promise<bigint>,
     allowance: (token, owner, spender) => client.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [owner, spender] } as never) as Promise<bigint>,
+    balance: (token, owner) => client.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [owner] } as never) as Promise<bigint>,
   }
 }

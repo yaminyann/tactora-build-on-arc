@@ -30,6 +30,19 @@ services:
       # Quote providers
       GATEWAY_PROVIDERS: ${GATEWAY_PROVIDERS:-0x,kyber,test-router,test-router-b}
       ZEROEX_API_KEY: ${ZEROEX_API_KEY:-}
+      # Platform dashboard: wallets allowed to sign in (comma-separated), and the key that encrypts API keys saved there.
+      PLATFORM_ADMIN_ADDRESSES: ${PLATFORM_ADMIN_ADDRESSES:-}
+      SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:-}
+      # Agent chat model. The admin picks provider and model in the app; these only supply the keys.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AGENT_LLM_URL: ${AGENT_LLM_URL:-}
+      AGENT_LLM_MODEL: ${AGENT_LLM_MODEL:-}
+      AGENT_LLM_API_KEY: ${AGENT_LLM_API_KEY:-}
+      AGENT_LLM_DAILY_CALLS: ${AGENT_LLM_DAILY_CALLS:-2000}
+      # Free market data (DexScreener, GeckoTerminal) needs no key. Keep under GeckoTerminal's limit.
+      GECKO_CALLS_PER_MIN: ${GECKO_CALLS_PER_MIN:-24}
       # Platform fee on browser market swaps (0 = off, max 100 = 1%). Needs a recipient address when > 0.
       PLATFORM_FEE_BPS: ${PLATFORM_FEE_BPS:-0}
       PLATFORM_FEE_RECIPIENT: ${PLATFORM_FEE_RECIPIENT:-}
@@ -64,11 +77,16 @@ services:
       target: web
       args:
         VITE_DEFAULT_NETWORK: ${VITE_DEFAULT_NETWORK:-arc-testnet}
+        VITE_RPC_URL_ARC_TESTNET: ${VITE_RPC_URL_ARC_TESTNET:-}
+        VITE_RPC_URL_ARC: ${VITE_RPC_URL_ARC:-}
         VITE_ORDERS_ADDRESS_ARC_TESTNET: ${VITE_ORDERS_ADDRESS_ARC_TESTNET:-}
         VITE_ORDERS_DEPLOY_TX_ARC_TESTNET: ${VITE_ORDERS_DEPLOY_TX_ARC_TESTNET:-}
         VITE_ORDERS_ADDRESS_ARC_MAINNET: ${VITE_ORDERS_ADDRESS_ARC_MAINNET:-}
         VITE_ORDERS_DEPLOY_TX_ARC_MAINNET: ${VITE_ORDERS_DEPLOY_TX_ARC_MAINNET:-}
         VITE_SWAP_TARGETS_ARC: ${VITE_SWAP_TARGETS_ARC:-}
+        VITE_CIRCLE_CLIENT_KEY: ${VITE_CIRCLE_CLIENT_KEY:-}
+        VITE_CIRCLE_CLIENT_URL: ${VITE_CIRCLE_CLIENT_URL:-}
+        VITE_CIRCLE_SPONSOR_GAS: ${VITE_CIRCLE_SPONSOR_GAS:-}
         VITE_SOCIAL_X: ${VITE_SOCIAL_X:-}
         VITE_SOCIAL_DISCORD: ${VITE_SOCIAL_DISCORD:-}
         VITE_SOCIAL_TELEGRAM: ${VITE_SOCIAL_TELEGRAM:-}

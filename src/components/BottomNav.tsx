@@ -19,17 +19,17 @@ export function BottomNav() {
   const { page, setPage } = useSettings()
   const tabs = [...usePageLinks(), { id: 'settings' as Page, label: 'Settings' }]
   return (
-    <nav aria-label="Pages" className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas md:hidden">
+    <nav aria-label="Pages" className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-canvas/95 backdrop-blur-sm md:hidden">
       <ul className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-        {tabs.map((t, i) => {
+        {tabs.map((t) => {
           const Icon = ICONS[t.id] ?? House
           const active = page === t.id
           return (
-            <li key={t.id} className={clsx(i > 0 && 'border-l border-line')}>
+            <li key={t.id} className="px-0.5 py-1">
               <button
                 onClick={() => setPage(t.id)}
                 aria-current={active ? 'page' : undefined}
-                className={clsx('flex min-h-[56px] w-full flex-col items-center justify-center gap-0.5 text-[11px] font-bold', active ? 'bg-accent text-accent-ink' : 'bg-canvas text-ink')}
+                className={clsx('flex min-h-[52px] w-full flex-col items-center justify-center gap-0.5 rounded-lg text-[11px] font-semibold', active ? 'bg-raised text-brand' : 'text-mute')}
               >
                 <Icon className="h-5 w-5" />
                 {t.label}

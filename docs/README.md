@@ -1,4 +1,4 @@
-# Lumarc documentation
+# Tactora documentation
 
 Arc Terminal is a non-custodial trading terminal for Arc. Users swap through a DEX aggregator, place escrowed conditional orders (limit, stop-loss, take-profit, stop-limit, trailing stop, OCO), and run recurring buys (DCA). Funds stay in a smart contract the user can always exit; anyone can execute an order once its condition is met.
 
@@ -11,6 +11,9 @@ Documentation last verified against the code on 2026-11-11. Facts about third-pa
 | Understand how the pieces fit | [architecture.md](architecture.md) |
 | Know exactly what works on testnet vs mainnet | [limitations.md](limitations.md) |
 | Set up and run the project | [configuration.md](configuration.md), then [operations.md](operations.md) |
+| Get every API key and account (all free) | [api-keys.md](api-keys.md) |
+| Run the Platform dashboard (stats, users, revenue, API keys) | [platform-dashboard.md](platform-dashboard.md) |
+| Launch on mainnet: env, decisions, checks | [go-live-checklist.md](go-live-checklist.md) |
 | Deploy the contract, especially to mainnet | [deployment.md](deployment.md) |
 
 ## Contract
